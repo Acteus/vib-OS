@@ -188,53 +188,26 @@ int fb_init(void)
 {
     printk(KERN_INFO "FB: Initializing framebuffer\n");
     
-    /* Try to find virtio-gpu device */
-    for (int i = 0; i < 8; i++) {
-        volatile uint8_t *base = (volatile uint8_t *)(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_SIZE);
-        
-        uint32_t magic = virtio_read32(base, VIRTIO_MMIO_MAGIC);
-        uint32_t device_id = virtio_read32(base, VIRTIO_MMIO_DEVICE_ID);
-        
-        if (magic == VIRTIO_MAGIC && device_id == VIRTIO_DEV_GPU) {
-            printk(KERN_INFO "FB: Found virtio-gpu at 0x%lx\n", 
-                   (unsigned long)(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_SIZE));
-            
-            /* Reset device */
-            virtio_write32(base, VIRTIO_MMIO_STATUS, 0);
-            
-            /* Acknowledge */
-            virtio_write32(base, VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK);
-            virtio_write32(base, VIRTIO_MMIO_STATUS, 
-                          VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER);
-            
-            /* For full virtio-gpu, we'd set up command queues here */
-            /* For now, fall through to simple framebuffer */
-            break;
-        }
-    }
+    /* Use static buffer in BSS - more reliable than PMM at early boot */
+    static uint32_t static_framebuffer[1024 * 768] __attribute__((aligned(4096)));
     
-    /* Use simple linear framebuffer */
-    /* Allocate framebuffer memory */
-    size_t fb_size = SIMPLE_FB_WIDTH * SIMPLE_FB_HEIGHT * (SIMPLE_FB_BPP / 8);
-    size_t num_pages = (fb_size + 4095) / 4096;
-    
-    phys_addr_t fb_phys = pmm_alloc_pages(num_pages);
-    if (!fb_phys) {
-        printk(KERN_ERR "FB: Failed to allocate framebuffer\n");
-        return -1;
-    }
-    
-    /* Map framebuffer with write-combining if possible */
-    vmm_map_range(fb_phys, fb_phys, fb_size, 0);
-    
-    framebuffer.buffer = (uint32_t *)fb_phys;
+    framebuffer.buffer = static_framebuffer;
     framebuffer.width = SIMPLE_FB_WIDTH;
     framebuffer.height = SIMPLE_FB_HEIGHT;
     framebuffer.pitch = SIMPLE_FB_WIDTH * 4;
     framebuffer.initialized = true;
     
     printk(KERN_INFO "FB: Framebuffer %ux%u at 0x%lx\n",
-           framebuffer.width, framebuffer.height, (unsigned long)fb_phys);
+           framebuffer.width, framebuffer.height, (unsigned long)framebuffer.buffer);
+    
+    /* Clear to dark blue */
+    fb_clear(0x1E1E2E);
+    
+    /* Configure QEMU ramfb to display our framebuffer */
+    extern int ramfb_init(uint32_t *framebuffer, uint32_t width, uint32_t height);
+    if (ramfb_init(framebuffer.buffer, framebuffer.width, framebuffer.height) == 0) {
+        printk(KERN_INFO "FB: QEMU ramfb display connected\n");
+    }
     
     /* Show boot splash */
     fb_show_splash();
