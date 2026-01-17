@@ -1255,16 +1255,32 @@ void gui_compose(void)
         draw_window(draw_order[i]);
     }
     
-    /* Fast copy backbuffer to framebuffer using 64-bit transfers */
+    /* Ultra-fast copy backbuffer to framebuffer using unrolled 64-bit transfers */
     if (primary_display.backbuffer && primary_display.framebuffer) {
         uint64_t *src = (uint64_t *)primary_display.backbuffer;
         uint64_t *dst = (uint64_t *)primary_display.framebuffer;
         size_t count64 = (primary_display.pitch * primary_display.height) / 8;
+        size_t i = 0;
         
-        /* Use 64-bit copies for speed (processes 2 pixels at once) */
-        for (size_t i = 0; i < count64; i++) {
+        /* Unrolled copy - 8 qwords (64 bytes / 16 pixels) per iteration */
+        size_t fast_count = count64 & ~7UL;  /* Round down to multiple of 8 */
+        for (; i < fast_count; i += 8) {
+            dst[i]   = src[i];
+            dst[i+1] = src[i+1];
+            dst[i+2] = src[i+2];
+            dst[i+3] = src[i+3];
+            dst[i+4] = src[i+4];
+            dst[i+5] = src[i+5];
+            dst[i+6] = src[i+6];
+            dst[i+7] = src[i+7];
+        }
+        /* Handle remaining */
+        for (; i < count64; i++) {
             dst[i] = src[i];
         }
+        
+        /* Memory barrier to ensure writes are visible before next frame */
+        asm volatile("dsb sy" ::: "memory");
     }
 }
 

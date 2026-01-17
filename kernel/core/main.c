@@ -264,12 +264,17 @@ static void start_init_process(void)
     gui_compose();
     gui_draw_cursor();
     
-    /* Main GUI event loop */
+    /* Main GUI event loop with proper flicker-free refresh */
     uint32_t frame = 0;
     int last_mx = 0, last_my = 0;
     int last_buttons = 0;
     int needs_redraw = 1;  /* Initial draw */
     int cursor_only = 0;   /* Only cursor needs updating */
+    
+    /* Timer for periodic auto-refresh (200ms = 5 FPS, flicker-free) */
+    extern uint64_t timer_get_ms(void);
+    uint64_t last_refresh = timer_get_ms();
+    const uint64_t REFRESH_MS = 200;  /* 5 FPS - smooth, no flicker */
     
     while (1) {
         /* Poll virtio input devices (keyboard/mouse) - MUST call this! */
@@ -301,7 +306,7 @@ static void start_init_process(void)
                 gui_handle_mouse_event(mx, my, mbuttons);
                 needs_redraw = 1;
             } else {
-                /* Just cursor moved - only update cursor position */
+                /* Just cursor moved - update cursor only */
                 cursor_only = 1;
             }
             last_mx = mx;
@@ -309,14 +314,20 @@ static void start_init_process(void)
             last_buttons = mbuttons;
         }
         
-        /* Only redraw when needed */
+        /* Periodic refresh for animations (5 FPS) */
+        uint64_t now = timer_get_ms();
+        if (now - last_refresh >= REFRESH_MS) {
+            last_refresh = now;
+            needs_redraw = 1;
+        }
+        
+        /* Redraw when needed - compose then swap */
         if (needs_redraw) {
             gui_compose();
             gui_draw_cursor();
             needs_redraw = 0;
             cursor_only = 0;
         } else if (cursor_only) {
-            /* Just update cursor - much faster */
             gui_draw_cursor();
             cursor_only = 0;
         }
@@ -324,8 +335,8 @@ static void start_init_process(void)
         frame++;
         (void)frame;
         
-        /* Frame rate limiting - minimal delay for responsive UI */
-        for (volatile int i = 0; i < 50000; i++) { }
+        /* Yield to prevent 100% CPU, allows input polling */
+        for (volatile int i = 0; i < 5000; i++) { }
     }
 }
 
