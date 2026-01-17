@@ -231,16 +231,39 @@ static void start_init_process(void)
     /* Create and start init process */
     printk(KERN_INFO "Executing /sbin/init...\n");
     
-    /* TODO: Implement process creation and exec */
-    /* For now, just enter an idle loop */
-    
     printk(KERN_INFO "Init process started (placeholder)\n");
     printk(KERN_INFO "System ready.\n\n");
     
-    /* Enter idle loop - in real implementation, this becomes the idle task */
+    /* Set up input handling */
+    extern int input_init(void);
+    extern void input_poll(void);
+    extern void input_set_key_callback(void (*callback)(int key));
+    extern void gui_compose(void);
+    extern void gui_draw_cursor(void);
+    extern void term_handle_key(void *term, int key);
+    extern void *term_get_active(void);
+    
+    input_init();
+    
+    /* Connect keyboard input to active terminal */
+    input_set_key_callback((void (*)(int))term_handle_key);
+    
+    printk(KERN_INFO "GUI: Event loop started - type in terminal!\n");
+    
+    /* Main GUI event loop */
+    uint32_t frame = 0;
     while (1) {
-        /* Wait for interrupt */
-        asm volatile("wfi");
+        /* Poll for keyboard input */
+        input_poll();
+        
+        /* Redraw GUI periodically */
+        if ((frame++ & 0xFFF) == 0) {
+            gui_compose();
+            gui_draw_cursor();
+        }
+        
+        /* Small delay to prevent CPU spinning */
+        for (volatile int i = 0; i < 10000; i++) { }
     }
 }
 
