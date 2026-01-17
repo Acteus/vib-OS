@@ -21,15 +21,31 @@
 #define COLOR_DARK_GRAY     0x404040
 #define COLOR_LIGHT_GRAY    0xC0C0C0
 
-/* UI Theme Colors */
+/* UI Theme Colors - macOS Inspired */
 #define THEME_BG            0x1E1E2E    /* Dark background */
 #define THEME_FG            0xCDD6F4    /* Light text */
-#define THEME_ACCENT        0x89B4FA    /* Blue accent */
+#define THEME_ACCENT        0x007AFF    /* macOS blue */
 #define THEME_ACCENT2       0xF38BA8    /* Pink accent */
-#define THEME_TITLEBAR      0x313244    /* Window title bar */
+#define THEME_TITLEBAR      0x3C3C3C    /* Window title bar */
+#define THEME_TITLEBAR_INACTIVE 0x4A4A4A
 #define THEME_BORDER        0x45475A    /* Window border */
 #define THEME_BUTTON        0x585B70    /* Button background */
 #define THEME_BUTTON_HOVER  0x6C7086    /* Button hover */
+
+/* macOS Traffic Light Colors */
+#define COLOR_BTN_CLOSE     0xFF5F57    /* Red */
+#define COLOR_BTN_MINIMIZE  0xFFBD2E    /* Yellow */
+#define COLOR_BTN_ZOOM      0x28C840    /* Green */
+
+/* Menu Bar */
+#define COLOR_MENU_BG       0x2D2D2D    /* Dark menu bar */
+#define COLOR_MENU_TEXT     0xFFFFFF    /* White text */
+#define MENU_BAR_HEIGHT     28
+
+/* Dock */
+#define COLOR_DOCK_BG       0x3C3C3C    /* Dark dock */
+#define COLOR_DOCK_BORDER   0x5C5C5C
+#define DOCK_HEIGHT         70
 
 /* ===================================================================== */
 /* Display Driver Interface */
@@ -133,33 +149,22 @@ void gui_draw_circle(int cx, int cy, int r, uint32_t color, bool filled)
 }
 
 /* ===================================================================== */
-/* 8x16 Font (PSF-style) */
+/* 8x16 Font - use external complete font */
 /* ===================================================================== */
 
 #define FONT_WIDTH  8
 #define FONT_HEIGHT 16
 
-/* Simple 8x16 bitmap font - printable ASCII only */
-static const uint8_t font_8x16[96][16] = {
-    /* Space (32) */
-    [0] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-    /* ! */
-    [1] = {0x00,0x00,0x18,0x3C,0x3C,0x3C,0x18,0x18,0x18,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-    /* " */
-    [2] = {0x00,0x66,0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-    /* # - Z basic shapes */
-    [33] = {0x00,0x00,0x00,0x3C,0x66,0x06,0x0C,0x18,0x30,0x60,0x66,0x7E,0x00,0x00,0x00,0x00}, /* 'A' */
-    [34] = {0x00,0x00,0x00,0x7C,0x66,0x66,0x7C,0x66,0x66,0x66,0x66,0x7C,0x00,0x00,0x00,0x00}, /* 'B' */
-    /* ... more characters would be defined here ... */
-};
+/* External font data from font.c - 256 characters */
+extern const uint8_t font_data[256][16];
 
 void gui_draw_char(int x, int y, char c, uint32_t fg, uint32_t bg)
 {
-    int idx = c - 32;
-    if (idx < 0 || idx >= 96) idx = 0;
+    unsigned char idx = (unsigned char)c;
+    const uint8_t *glyph = font_data[idx];
     
     for (int row = 0; row < FONT_HEIGHT; row++) {
-        uint8_t line = font_8x16[idx][row];
+        uint8_t line = glyph[row];
         for (int col = 0; col < FONT_WIDTH; col++) {
             uint32_t color = (line & (0x80 >> col)) ? fg : bg;
             draw_pixel(x + col, y + row, color);
@@ -322,6 +327,18 @@ void gui_focus_window(struct window *win)
     focused_window = win;
 }
 
+/* Draw a filled circle (for traffic light buttons) */
+static void draw_circle(int cx, int cy, int r, uint32_t color)
+{
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            if (x*x + y*y <= r*r) {
+                draw_pixel(cx + x, cy + y, color);
+            }
+        }
+    }
+}
+
 /* Draw a single window */
 static void draw_window(struct window *win)
 {
@@ -334,29 +351,32 @@ static void draw_window(struct window *win)
     gui_draw_rect_outline(x, y, w, h, THEME_BORDER, BORDER_WIDTH);
     
     if (win->has_titlebar) {
-        /* Draw title bar */
-        uint32_t titlebar_color = win->focused ? THEME_ACCENT : THEME_TITLEBAR;
+        /* Draw title bar - macOS style gray */
+        uint32_t titlebar_color = win->focused ? THEME_TITLEBAR : THEME_TITLEBAR_INACTIVE;
         gui_draw_rect(x + BORDER_WIDTH, y + BORDER_WIDTH, 
                      w - BORDER_WIDTH * 2, TITLEBAR_HEIGHT, titlebar_color);
         
-        /* Window title */
-        gui_draw_string(x + 10, y + 6, win->title, THEME_FG, titlebar_color);
+        /* Traffic light buttons on LEFT side - macOS style */
+        int btn_cx = x + BORDER_WIDTH + 18;  /* First circle center X */
+        int btn_cy = y + BORDER_WIDTH + TITLEBAR_HEIGHT / 2;  /* Center Y */
+        int btn_r = 6;  /* Button radius */
         
-        /* Close button */
-        int btn_x = x + w - BORDER_WIDTH - 24;
-        int btn_y = y + BORDER_WIDTH + 4;
-        gui_draw_rect(btn_x, btn_y, 20, 20, THEME_ACCENT2);
-        gui_draw_string(btn_x + 6, btn_y + 2, "X", COLOR_WHITE, THEME_ACCENT2);
+        /* Close button - Red */
+        draw_circle(btn_cx, btn_cy, btn_r, COLOR_BTN_CLOSE);
         
-        /* Minimize button */
-        btn_x -= 24;
-        gui_draw_rect(btn_x, btn_y, 20, 20, THEME_BUTTON);
-        gui_draw_string(btn_x + 6, btn_y + 2, "_", THEME_FG, THEME_BUTTON);
+        /* Minimize button - Yellow */
+        btn_cx += 20;
+        draw_circle(btn_cx, btn_cy, btn_r, COLOR_BTN_MINIMIZE);
         
-        /* Maximize button */
-        btn_x -= 24;
-        gui_draw_rect(btn_x, btn_y, 20, 20, THEME_BUTTON);
-        gui_draw_rect_outline(btn_x + 5, btn_y + 5, 10, 10, THEME_FG, 1);
+        /* Zoom button - Green */
+        btn_cx += 20;
+        draw_circle(btn_cx, btn_cy, btn_r, COLOR_BTN_ZOOM);
+        
+        /* Window title - centered */
+        int title_len = 0;
+        for (const char *p = win->title; *p; p++) title_len++;
+        int title_x = x + (w - title_len * 8) / 2;
+        gui_draw_string(title_x, y + 6, win->title, THEME_FG, titlebar_color);
     }
     
     /* Draw content area */
@@ -374,43 +394,97 @@ static void draw_window(struct window *win)
 }
 
 /* ===================================================================== */
-/* Desktop and Taskbar */
+/* Desktop with Menu Bar and Dock */
 /* ===================================================================== */
 
-#define TASKBAR_HEIGHT  40
+static void draw_menu_bar(void)
+{
+    /* Menu bar background */
+    gui_draw_rect(0, 0, primary_display.width, MENU_BAR_HEIGHT, COLOR_MENU_BG);
+    
+    /* Apple logo placeholder */
+    gui_draw_string(12, 6, "@", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    
+    /* App name */
+    gui_draw_string(36, 6, "Vib-OS", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    
+    /* Menu items */
+    gui_draw_string(96, 6, "File", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    gui_draw_string(144, 6, "Edit", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    gui_draw_string(192, 6, "View", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    gui_draw_string(240, 6, "Help", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    
+    /* Clock on right */
+    gui_draw_string(primary_display.width - 60, 6, "12:00", COLOR_MENU_TEXT, COLOR_MENU_BG);
+}
+
+/* Dock icons */
+#include "icons.h"
+
+static const char *dock_labels[] = {
+    "Term", "Files", "Calc", "Edit", "Help"
+};
+#define NUM_DOCK_ICONS 5
+#define DOCK_ICON_SIZE 40   /* Display size */
+#define DOCK_ICON_MARGIN 4  /* Padding inside dock pill */
+#define DOCK_PADDING 16     /* Space between icons */
+
+/* Draw a 32x32 bitmap icon scaled to display size */
+static void draw_icon(int x, int y, int size, const unsigned char *bitmap, uint32_t fg, uint32_t bg)
+{
+    for (int py = 0; py < 32; py++) {
+        int draw_y = y + (py * size) / 32;
+        for (int px = 0; px < 32; px++) {
+            int draw_x = x + (px * size) / 32;
+            uint32_t color = bitmap[py * 32 + px] ? fg : bg;
+            /* Draw a small block for scaling */
+            int next_x = x + ((px + 1) * size) / 32;
+            int next_y = y + ((py + 1) * size) / 32;
+            for (int dy = draw_y; dy < next_y; dy++) {
+                for (int dx = draw_x; dx < next_x; dx++) {
+                    draw_pixel(dx, dy, color);
+                }
+            }
+        }
+    }
+}
+
+static void draw_dock(void)
+{
+    int dock_content_w = NUM_DOCK_ICONS * (DOCK_ICON_SIZE + DOCK_PADDING) - DOCK_PADDING + 40;
+    int dock_x = (primary_display.width - dock_content_w) / 2;
+    int dock_y = primary_display.height - DOCK_HEIGHT + 10;
+    int dock_h = DOCK_HEIGHT - 20;
+    
+    /* Dock background pill */
+    gui_draw_rect(dock_x, dock_y, dock_content_w, dock_h, COLOR_DOCK_BG);
+    gui_draw_rect_outline(dock_x, dock_y, dock_content_w, dock_h, COLOR_DOCK_BORDER, 1);
+    
+    /* Draw icons */
+    int icon_x = dock_x + 20;
+    int icon_y = dock_y + (dock_h - DOCK_ICON_SIZE) / 2;
+    
+    for (int i = 0; i < NUM_DOCK_ICONS; i++) {
+        /* Draw icon bitmap */
+        draw_icon(icon_x, icon_y, DOCK_ICON_SIZE, dock_icons_bmp[i], THEME_FG, COLOR_DOCK_BG);
+        
+        icon_x += DOCK_ICON_SIZE + DOCK_PADDING;
+    }
+}
 
 static void draw_desktop(void)
 {
-    /* Draw desktop background */
-    gui_draw_rect(0, 0, primary_display.width, primary_display.height - TASKBAR_HEIGHT, 
-                 THEME_BG);
+    /* Desktop background */
+    gui_draw_rect(0, MENU_BAR_HEIGHT, 
+                  primary_display.width, 
+                  primary_display.height - MENU_BAR_HEIGHT - DOCK_HEIGHT, 
+                  THEME_BG);
     
-    /* Draw taskbar */
-    gui_draw_rect(0, primary_display.height - TASKBAR_HEIGHT, 
-                 primary_display.width, TASKBAR_HEIGHT, THEME_TITLEBAR);
+    /* Draw menu bar at top */
+    draw_menu_bar();
     
-    /* Start button */
-    gui_draw_rect(4, primary_display.height - TASKBAR_HEIGHT + 4, 
-                 80, TASKBAR_HEIGHT - 8, THEME_ACCENT);
-    gui_draw_string(12, primary_display.height - TASKBAR_HEIGHT + 12, 
-                   "Vib-OS", COLOR_WHITE, THEME_ACCENT);
-    
-    /* Window buttons in taskbar */
-    int btn_x = 100;
-    for (struct window *win = window_stack; win; win = win->next) {
-        if (!win->visible) continue;
-        
-        uint32_t btn_color = win->focused ? THEME_ACCENT : THEME_BUTTON;
-        gui_draw_rect(btn_x, primary_display.height - TASKBAR_HEIGHT + 4, 
-                     120, TASKBAR_HEIGHT - 8, btn_color);
-        gui_draw_string(btn_x + 4, primary_display.height - TASKBAR_HEIGHT + 12, 
-                       win->title, THEME_FG, btn_color);
-        btn_x += 124;
-    }
-    
-    /* Clock */
-    gui_draw_string(primary_display.width - 60, primary_display.height - TASKBAR_HEIGHT + 12,
-                   "12:00", THEME_FG, THEME_TITLEBAR);
+    /* Draw dock at bottom */
+    draw_dock();
 }
 
 /* ===================================================================== */
@@ -454,26 +528,125 @@ void gui_compose(void)
 }
 
 /* ===================================================================== */
-/* Mouse Cursor */
+/* Mouse Cursor (Mac-style arrow with background save/restore) */
 /* ===================================================================== */
 
-static int mouse_x = 100, mouse_y = 100;
-static int mouse_buttons = 0;
+#define CURSOR_WIDTH 12
+#define CURSOR_HEIGHT 19
 
-static const uint8_t cursor_bitmap[16] = {
-    0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF,
-    0xFC, 0xFC, 0xD8, 0x98, 0x0C, 0x0C, 0x06, 0x00
+/* Classic Mac arrow: 1=black, 2=white, 0=transparent */
+static const uint8_t cursor_data[CURSOR_HEIGHT][CURSOR_WIDTH] = {
+    {1,0,0,0,0,0,0,0,0,0,0,0},
+    {1,1,0,0,0,0,0,0,0,0,0,0},
+    {1,2,1,0,0,0,0,0,0,0,0,0},
+    {1,2,2,1,0,0,0,0,0,0,0,0},
+    {1,2,2,2,1,0,0,0,0,0,0,0},
+    {1,2,2,2,2,1,0,0,0,0,0,0},
+    {1,2,2,2,2,2,1,0,0,0,0,0},
+    {1,2,2,2,2,2,2,1,0,0,0,0},
+    {1,2,2,2,2,2,2,2,1,0,0,0},
+    {1,2,2,2,2,2,2,2,2,1,0,0},
+    {1,2,2,2,2,2,2,2,2,2,1,0},
+    {1,2,2,2,2,2,2,1,1,1,1,1},
+    {1,2,2,2,1,2,2,1,0,0,0,0},
+    {1,2,2,1,0,1,2,2,1,0,0,0},
+    {1,2,1,0,0,1,2,2,1,0,0,0},
+    {1,1,0,0,0,0,1,2,2,1,0,0},
+    {1,0,0,0,0,0,1,2,2,1,0,0},
+    {0,0,0,0,0,0,0,1,2,1,0,0},
+    {0,0,0,0,0,0,0,1,1,0,0,0},
 };
 
-void gui_draw_cursor(void)
+static int mouse_x = 512, mouse_y = 384;
+static int mouse_buttons = 0;
+static uint32_t saved_bg[CURSOR_HEIGHT][CURSOR_WIDTH];
+static int saved_x = -1, saved_y = -1;
+static int cursor_visible = 0;
+
+static void save_cursor_background(int x, int y)
 {
-    for (int y = 0; y < 16; y++) {
-        for (int x = 0; x < 8; x++) {
-            if (cursor_bitmap[y] & (0x80 >> x)) {
-                draw_pixel(mouse_x + x, mouse_y + y, COLOR_WHITE);
+    for (int row = 0; row < CURSOR_HEIGHT; row++) {
+        for (int col = 0; col < CURSOR_WIDTH; col++) {
+            int px = x + col;
+            int py = y + row;
+            if (px >= 0 && px < (int)primary_display.width && 
+                py >= 0 && py < (int)primary_display.height) {
+                uint32_t *target = primary_display.framebuffer;
+                if (target) {
+                    saved_bg[row][col] = target[py * (primary_display.pitch / 4) + px];
+                }
             }
         }
     }
+    saved_x = x;
+    saved_y = y;
+}
+
+static void restore_cursor_background(void)
+{
+    if (saved_x < 0) return;
+    
+    for (int row = 0; row < CURSOR_HEIGHT; row++) {
+        for (int col = 0; col < CURSOR_WIDTH; col++) {
+            int px = saved_x + col;
+            int py = saved_y + row;
+            if (px >= 0 && px < (int)primary_display.width && 
+                py >= 0 && py < (int)primary_display.height) {
+                uint32_t *target = primary_display.framebuffer;
+                if (target) {
+                    target[py * (primary_display.pitch / 4) + px] = saved_bg[row][col];
+                }
+            }
+        }
+    }
+    saved_x = -1;
+}
+
+static void draw_cursor_at(int x, int y)
+{
+    for (int row = 0; row < CURSOR_HEIGHT; row++) {
+        for (int col = 0; col < CURSOR_WIDTH; col++) {
+            uint8_t pixel = cursor_data[row][col];
+            if (pixel == 0) continue;
+            
+            int px = x + col;
+            int py = y + row;
+            if (px >= 0 && px < (int)primary_display.width && 
+                py >= 0 && py < (int)primary_display.height) {
+                uint32_t color = (pixel == 1) ? 0x00000000 : 0x00FFFFFF;
+                uint32_t *target = primary_display.framebuffer;
+                if (target) {
+                    target[py * (primary_display.pitch / 4) + px] = color;
+                }
+            }
+        }
+    }
+}
+
+void gui_draw_cursor(void)
+{
+    extern void mouse_get_position(int *x, int *y);
+    int new_x, new_y;
+    mouse_get_position(&new_x, &new_y);
+    
+    /* Only update if position changed */
+    if (new_x == mouse_x && new_y == mouse_y && cursor_visible) {
+        return;
+    }
+    
+    /* Restore old background */
+    if (cursor_visible) {
+        restore_cursor_background();
+    }
+    
+    /* Update position */
+    mouse_x = new_x;
+    mouse_y = new_y;
+    
+    /* Save and draw new cursor */
+    save_cursor_background(mouse_x, mouse_y);
+    draw_cursor_at(mouse_x, mouse_y);
+    cursor_visible = 1;
 }
 
 void gui_move_mouse(int dx, int dy)
@@ -493,15 +666,50 @@ void gui_set_mouse_buttons(int buttons)
 }
 
 /* ===================================================================== */
-/* Event Handling */
+/* Event Handling with Window Dragging */
 /* ===================================================================== */
+
+/* Dragging state */
+static struct window *dragging_window = 0;
+static int drag_offset_x = 0, drag_offset_y = 0;
+static int prev_buttons = 0;
 
 void gui_handle_mouse_event(int x, int y, int buttons)
 {
+    int prev_x = mouse_x;
+    int prev_y = mouse_y;
     mouse_x = x;
     mouse_y = y;
     
+    int left_click = (buttons & 1) && !(prev_buttons & 1);  /* Just pressed */
+    int left_held = (buttons & 1);
+    int left_release = !(buttons & 1) && (prev_buttons & 1);
+    
+    /* Handle window dragging */
+    if (dragging_window && left_held) {
+        /* Move window with mouse */
+        dragging_window->x = x - drag_offset_x;
+        dragging_window->y = y - drag_offset_y;
+        
+        /* Clamp to screen */
+        if (dragging_window->y < MENU_BAR_HEIGHT) 
+            dragging_window->y = MENU_BAR_HEIGHT;
+        if (dragging_window->y > (int)primary_display.height - DOCK_HEIGHT - TITLEBAR_HEIGHT)
+            dragging_window->y = primary_display.height - DOCK_HEIGHT - TITLEBAR_HEIGHT;
+        if (dragging_window->x < 0) dragging_window->x = 0;
+        if (dragging_window->x > (int)primary_display.width - 100) 
+            dragging_window->x = primary_display.width - 100;
+    }
+    
+    if (left_release) {
+        dragging_window = 0;
+    }
+    
+    prev_buttons = buttons;
+    
     /* Check if clicking on a window */
+    if (!left_click) return;
+    
     for (struct window *win = window_stack; win; win = win->next) {
         if (!win->visible) continue;
         
@@ -510,15 +718,29 @@ void gui_handle_mouse_event(int x, int y, int buttons)
             
             gui_focus_window(win);
             
-            /* Check for close button */
+            /* Check for traffic light buttons (on LEFT side now) */
             if (win->has_titlebar) {
-                int btn_x = win->x + win->width - BORDER_WIDTH - 24;
-                int btn_y = win->y + BORDER_WIDTH + 4;
-                if (x >= btn_x && x < btn_x + 20 && y >= btn_y && y < btn_y + 20) {
-                    if (buttons & 1) {
-                        gui_destroy_window(win);
-                        return;
-                    }
+                int btn_cy = win->y + BORDER_WIDTH + TITLEBAR_HEIGHT / 2;
+                int btn_r = 8;  /* Click radius slightly larger than visual */
+                
+                /* Close button (first) */
+                int close_cx = win->x + BORDER_WIDTH + 18;
+                if ((x - close_cx) * (x - close_cx) + (y - btn_cy) * (y - btn_cy) <= btn_r * btn_r) {
+                    gui_destroy_window(win);
+                    return;
+                }
+                
+                /* Minimize button (second) - skip for now */
+                /* Zoom button (third) - skip for now */
+                
+                /* Start dragging if clicking on title bar */
+                if (y >= win->y + BORDER_WIDTH && 
+                    y < win->y + BORDER_WIDTH + TITLEBAR_HEIGHT &&
+                    x >= win->x + BORDER_WIDTH + 70) {  /* After traffic lights */
+                    dragging_window = win;
+                    drag_offset_x = x - win->x;
+                    drag_offset_y = y - win->y;
+                    return;
                 }
             }
             
@@ -526,6 +748,48 @@ void gui_handle_mouse_event(int x, int y, int buttons)
                 win->on_mouse(win, x - win->x, y - win->y, buttons);
             }
             break;
+        }
+    }
+    
+    /* Check dock click */
+    int dock_content_w = NUM_DOCK_ICONS * (DOCK_ICON_SIZE + DOCK_PADDING) - DOCK_PADDING + 40;
+    int dock_x = (primary_display.width - dock_content_w) / 2;
+    int dock_y = primary_display.height - DOCK_HEIGHT + 10;
+    int dock_h = DOCK_HEIGHT - 20;
+    
+    if (y >= dock_y && y < dock_y + dock_h) {
+        int icon_x = dock_x + 20;
+        int icon_y_start = dock_y + (dock_h - DOCK_ICON_SIZE) / 2;
+        
+        for (int i = 0; i < NUM_DOCK_ICONS; i++) {
+            if (x >= icon_x && x < icon_x + DOCK_ICON_SIZE &&
+                y >= icon_y_start && y < icon_y_start + DOCK_ICON_SIZE) {
+                /* Clicked on icon i - create a window for it */
+                static int app_x = 100;
+                static int app_y = 80;
+                
+                switch (i) {
+                    case 0: /* Terminal */
+                        gui_create_window("Terminal", app_x, app_y, 400, 300);
+                        break;
+                    case 1: /* Files */
+                        gui_create_window("Files", app_x + 30, app_y + 30, 450, 350);
+                        break;
+                    case 2: /* Calculator */
+                        gui_create_window("Calculator", app_x + 60, app_y + 60, 250, 300);
+                        break;
+                    case 3: /* Paint */
+                        gui_create_window("Paint", app_x + 90, app_y + 90, 500, 400);
+                        break;
+                    case 4: /* Help */
+                        gui_create_window("Help", app_x + 120, app_y + 120, 350, 280);
+                        break;
+                }
+                app_x = (app_x + 50) % 300 + 100;
+                app_y = (app_y + 50) % 200 + 80;
+                return;
+            }
+            icon_x += DOCK_ICON_SIZE + DOCK_PADDING;
         }
     }
 }

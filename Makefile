@@ -242,11 +242,11 @@ run: kernel
 run-gui: kernel
 	@echo "[RUN] Starting Vib-OS with GUI display..."
 	@qemu-system-aarch64 -M virt,gic-version=3 \
-		-cpu max -m 4G \
-		-vga none \
+		-cpu max -m 512M \
+		-global virtio-mmio.force-legacy=false \
 		-device ramfb \
-		-device virtio-keyboard-pci \
-		-device virtio-mouse-pci \
+		-device virtio-keyboard-device \
+		-device virtio-tablet-device \
 		-serial stdio \
 		-kernel $(KERNEL_BINARY)
 

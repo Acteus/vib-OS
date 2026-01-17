@@ -226,6 +226,19 @@ static void init_subsystems(void *dtb)
 /*
  * start_init_process - Start the first userspace process (PID 1)
  */
+
+/* Global terminal pointer for keyboard callback */
+static void *g_active_terminal = 0;
+
+/* Keyboard callback wrapper */
+static void keyboard_handler(int key)
+{
+    extern void term_handle_key(void *term, int key);
+    if (g_active_terminal) {
+        term_handle_key(g_active_terminal, key);
+    }
+}
+
 static void start_init_process(void)
 {
     /* Create and start init process */
@@ -240,30 +253,78 @@ static void start_init_process(void)
     extern void input_set_key_callback(void (*callback)(int key));
     extern void gui_compose(void);
     extern void gui_draw_cursor(void);
-    extern void term_handle_key(void *term, int key);
     extern void *term_get_active(void);
+    extern void *term_create(int x, int y, int cols, int rows);
+    extern void term_render(void *term, int x, int y);
     
     input_init();
     
-    /* Connect keyboard input to active terminal */
-    input_set_key_callback((void (*)(int))term_handle_key);
+    /* Create a terminal if not exists and set as active */
+    g_active_terminal = term_get_active();
+    if (!g_active_terminal) {
+        g_active_terminal = term_create(60, 92, 45, 15);
+    }
+    
+    /* Connect keyboard input to terminal */
+    input_set_key_callback(keyboard_handler);
     
     printk(KERN_INFO "GUI: Event loop started - type in terminal!\n");
     
+    /* Initial render */
+    gui_compose();
+    if (g_active_terminal) {
+        term_render(g_active_terminal, 60, 92);
+    }
+    gui_draw_cursor();
+    
     /* Main GUI event loop */
     uint32_t frame = 0;
+    int last_mx = 0, last_my = 0;
+    int last_buttons = 0;
+    int needs_redraw = 1;  /* Initial draw */
+    
     while (1) {
         /* Poll for keyboard input */
-        input_poll();
-        
-        /* Redraw GUI periodically */
-        if ((frame++ & 0xFFF) == 0) {
-            gui_compose();
-            gui_draw_cursor();
+        extern int uart_getc_nonblock(void);
+        int c = uart_getc_nonblock();
+        if (c >= 0 && g_active_terminal) {
+            extern void term_handle_key(void *term, int key);
+            term_handle_key(g_active_terminal, c);
+            needs_redraw = 1;
         }
         
-        /* Small delay to prevent CPU spinning */
-        for (volatile int i = 0; i < 10000; i++) { }
+        /* Poll mouse for position and buttons */
+        extern void mouse_get_position(int *x, int *y);
+        extern int mouse_get_buttons(void);
+        extern void gui_handle_mouse_event(int x, int y, int buttons);
+        
+        int mx, my;
+        mouse_get_position(&mx, &my);
+        int mbuttons = mouse_get_buttons();
+        
+        /* Check if mouse changed */
+        if (mx != last_mx || my != last_my || mbuttons != last_buttons) {
+            gui_handle_mouse_event(mx, my, mbuttons);
+            last_mx = mx;
+            last_my = my;
+            last_buttons = mbuttons;
+            needs_redraw = 1;
+        }
+        
+        /* Only redraw when needed */
+        if (needs_redraw) {
+            gui_compose();
+            if (g_active_terminal) {
+                term_render(g_active_terminal, 60, 92);
+            }
+            gui_draw_cursor();
+            needs_redraw = 0;
+        }
+        
+        frame++;
+        
+        /* Delay to reduce CPU usage and flashing */
+        for (volatile int i = 0; i < 2000; i++) { }
     }
 }
 
