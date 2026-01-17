@@ -26,7 +26,16 @@ void kmalloc_init(void);
  * 
  * Return: Pointer to allocated memory, or NULL on failure
  */
-void *kmalloc(size_t size, uint32_t flags);
+void *_kmalloc(size_t size, uint32_t flags);
+
+/* Variadic macro to make flags optional (default 0) */
+#define _KMALLOC_1(size)        _kmalloc((size), 0)
+#define _KMALLOC_2(size, flags) _kmalloc((size), (flags))
+#define _KMALLOC_NARG(...) _KMALLOC_NARG_(__VA_ARGS__, 2, 1)
+#define _KMALLOC_NARG_(_1, _2, N, ...) N
+#define _KMALLOC_DISPATCH(N) _KMALLOC_##N
+#define _KMALLOC_DISPATCH_(N) _KMALLOC_DISPATCH(N)
+#define kmalloc(...) _KMALLOC_DISPATCH_(_KMALLOC_NARG(__VA_ARGS__))(__VA_ARGS__)
 
 /**
  * kzalloc - Allocate zeroed kernel memory

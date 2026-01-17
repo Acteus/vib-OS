@@ -229,25 +229,9 @@ static uint16_t tcp_checksum(struct ip_hdr *ip, struct tcp_hdr *tcp, size_t tcp_
 }
 
 /* ===================================================================== */
-/* Byte Order Conversion */
+/* Byte Order - use functions from net.h */
 /* ===================================================================== */
 
-static inline uint16_t htons(uint16_t x) {
-    return ((x & 0xFF) << 8) | ((x >> 8) & 0xFF);
-}
-
-static inline uint16_t ntohs(uint16_t x) {
-    return htons(x);
-}
-
-static inline uint32_t htonl(uint32_t x) {
-    return ((x & 0xFF) << 24) | ((x & 0xFF00) << 8) |
-           ((x >> 8) & 0xFF00) | ((x >> 24) & 0xFF);
-}
-
-static inline uint32_t ntohl(uint32_t x) {
-    return htonl(x);
-}
 
 /* ===================================================================== */
 /* ARP Functions */
@@ -398,7 +382,7 @@ static struct tcp_connection *tcp_alloc_connection(void)
             conn->recv_len = 0;
             conn->send_len = 0;
             conn->recv_wnd = 65535;
-            con->send_wnd = 65535;
+            conn->send_wnd = 65535;
             return conn;
         }
     }
@@ -544,7 +528,7 @@ int udp_send(uint32_t dest_ip, uint16_t src_port, uint16_t dest_port,
 /* Network Initialization */
 /* ===================================================================== */
 
-int net_init(void)
+void tcpip_init(void)
 {
     printk(KERN_INFO "NET: Initializing network stack\n");
     
@@ -568,8 +552,6 @@ int net_init(void)
     
     printk(KERN_INFO "NET: Loopback interface configured\n");
     printk(KERN_INFO "NET: TCP/IP stack initialized\n");
-    
-    return 0;
 }
 
 /* Interface configuration */

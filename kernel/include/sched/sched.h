@@ -112,6 +112,11 @@ struct task_struct {
     int exit_code;
     int exit_signal;
     
+    /* Signal handling */
+    struct signal_struct *signals;
+    uint64_t pending_signals;
+    uint64_t blocked_signals;
+    
     /* Flags */
     uint32_t flags;
 };

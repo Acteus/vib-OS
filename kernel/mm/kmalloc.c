@@ -120,7 +120,7 @@ void kmalloc_init(void)
 /* Allocation */
 /* ===================================================================== */
 
-void *kmalloc(size_t size, uint32_t flags)
+void *_kmalloc(size_t size, uint32_t flags)
 {
     if (!heap_initialized) {
         kmalloc_init();
