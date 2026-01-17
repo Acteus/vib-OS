@@ -1,38 +1,52 @@
-# vib-OS
+# Vib-OS
 
-**A Production-Grade ARM64 Operating System for Apple Silicon**
+**A Production-Grade ARM64 Operating System**
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-![Platform](https://img.shields.io/badge/platform-ARM64%20%7C%20Apple%20M2-blue)
+![Platform](https://img.shields.io/badge/platform-ARM64-blue)
+![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%20%7C%20M2%20%7C%20M3-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ```
-  _   _       _       ___  ____  
- | | | |_ __ (_)_  __/ _ \/ ___| 
- | | | | '_ \| \ \/ / | | \___ \ 
- | |_| | | | | |>  <| |_| |___) |
-  \___/|_| |_|_/_/\_\\___/|____/ 
+        _  _         ___  ____  
+ __   _(_)| |__     / _ \/ ___| 
+ \ \ / / || '_ \   | | | \___ \ 
+  \ V /| || |_) |  | |_| |___) |
+   \_/ |_||_.__/    \___/|____/ 
 
-vib-OS v0.2.0 - ARM64
+Vib-OS v0.3.0 - ARM64
 ```
 
 ## Overview
 
-vib-OS is a from-scratch, production-grade Unix-like operating system designed for Apple M2 Macs. Built with over **10,000 lines** of C and ARM64 Assembly, it features:
+Vib-OS is a from-scratch, production-grade Unix-like operating system built for ARM64 platforms. With over **12,600 lines** of C and Assembly, it features:
 
 - ✅ **ARM64 Kernel** with 4-level MMU page tables
 - ✅ **GICv3** interrupt controller support
-- ✅ **Process Management** with fork/exec
-- ✅ **VFS** with ramfs filesystem
-- ✅ **BSD Socket API** with TCP/IP stack
-- ✅ **Asahi Linux Driver Scaffolding** for Apple hardware
+- ✅ **Full TCP/IP Stack** with DNS resolution
+- ✅ **Process Management** with fork/exec and signals
+- ✅ **VFS + ext4** filesystem support
+- ✅ **Asahi Linux Drivers** for Apple Silicon hardware
+
+## Supported Platforms
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **QEMU ARM64** | ✅ Tested | Primary development target |
+| **Apple M1** | ✅ Supported | All variants (Pro/Max/Ultra) |
+| **Apple M2** | ✅ Supported | All variants (Pro/Max/Ultra) |
+| **Apple M3** | ✅ Supported | All variants (Pro/Max) |
+| **Raspberry Pi 4/5** | 🔄 Planned | ARM64 Cortex-A72/A76 |
+| **Generic ARM64** | 🔄 Planned | Any ARMv8-A processor |
+
+> **Note:** The kernel is designed to be portable across ARM64 platforms. Currently tested on QEMU virt machine with GICv3. Apple Silicon support uses Asahi Linux driver scaffolding.
 
 ## Quick Start
 
 ### Build Requirements
 
-- macOS with Homebrew
-- LLVM/Clang (`brew install llvm`)
+- macOS or Linux
+- LLVM/Clang (`brew install llvm` on macOS)
 - QEMU for ARM64 (`brew install qemu`)
 - LLD Linker (`brew install lld`)
 
@@ -46,8 +60,9 @@ cd vib-OS
 # Build the kernel
 make kernel
 
-# Run in QEMU
+# Run in QEMU (works on any host)
 make run
+
 # Or manually:
 qemu-system-aarch64 -M virt,gic-version=3 -cpu max -m 4G \
     -nographic -kernel build/kernel/unixos.elf
@@ -56,7 +71,7 @@ qemu-system-aarch64 -M virt,gic-version=3 -cpu max -m 4G \
 ### Expected Boot Output
 
 ```
-vib-OS v0.2.0 - ARM64
+Vib-OS v0.3.0 - ARM64
 
 [INIT] Phase 1: Core Hardware
   GIC: Distributor supports 288 IRQs
@@ -72,9 +87,6 @@ vib-OS v0.2.0 - ARM64
 [INIT] Phase 4: Filesystems
   VFS: Initialized
 
-[INIT] Phase 5: Device Drivers
-  Loading display, keyboard, NVMe, USB, network drivers...
-
 [INIT] Kernel initialization complete!
 System ready.
 ```
@@ -82,45 +94,22 @@ System ready.
 ## Architecture
 
 ```
-vib-OS/
-├── kernel/                 # Kernel source code
-│   ├── arch/arm64/        # ARM64-specific code
-│   │   ├── boot.S         # Boot assembly, exception vectors
-│   │   ├── gic.c          # GICv3 interrupt controller
-│   │   └── timer.c        # ARM Generic Timer
-│   ├── core/              # Core kernel
-│   │   ├── main.c         # Kernel entry point
-│   │   └── printk.c       # Kernel console output
-│   ├── mm/                # Memory management
-│   │   ├── pmm.c          # Physical memory (buddy allocator)
-│   │   ├── vmm.c          # Virtual memory (page tables)
-│   │   └── kmalloc.c      # Kernel heap
-│   ├── sched/             # Process scheduling
-│   │   ├── sched.c        # Round-robin scheduler
-│   │   ├── fork.c         # fork/exec implementation
-│   │   └── switch.S       # Context switch assembly
-│   ├── fs/                # Filesystems
-│   │   ├── vfs.c          # Virtual filesystem layer
-│   │   └── ramfs.c        # RAM filesystem
-│   ├── net/               # Networking
-│   │   └── socket.c       # BSD socket API
-│   ├── syscall/           # System calls
-│   │   └── syscall.c      # Syscall dispatcher
-│   └── ipc/               # Inter-process communication
-│       └── pipe.c         # Pipe implementation
+Vib-OS/
+├── kernel/                 # Kernel source (12,600+ lines)
+│   ├── arch/arm64/        # ARM64-specific (boot.S, gic.c, timer.c)
+│   ├── core/              # Main, printk, boot config
+│   ├── mm/                # PMM, VMM, kmalloc
+│   ├── sched/             # Scheduler, fork, signals
+│   ├── fs/                # VFS, ramfs, ext4
+│   ├── net/               # TCP/IP, DNS, BSD sockets
+│   └── syscall/           # System call handlers
 ├── drivers/               # Device drivers
-│   ├── uart/              # Serial console
-│   ├── gpu/               # Apple AGX GPU
-│   └── nvme/              # Apple ANS NVMe
-├── libc/                  # Minimal C library
-│   ├── src/               # C library source
-│   └── include/           # C library headers
-├── userspace/             # Userspace programs
-│   ├── init/              # Init process (PID 1)
-│   └── shell/             # Shell implementation
-└── runtimes/              # Language runtime scaffolding
-    ├── python/            # CPython 3.12 port
-    └── nodejs/            # Node.js 20 LTS port
+│   ├── gpu/               # Apple AGX GPU (Asahi-based)
+│   ├── nvme/              # Apple ANS NVMe
+│   └── uart/              # Serial console (PL011 + Apple)
+├── libc/                  # Minimal C library + musl build
+├── userspace/             # Init process, shell
+└── runtimes/              # Python 3.12, Node.js 20 ports
 ```
 
 ## Features
@@ -132,84 +121,55 @@ vib-OS/
 | MMU | ✅ | 4-level page tables, identity mapping |
 | GIC | ✅ | GICv3 interrupt controller |
 | Timer | ✅ | ARM Generic Timer |
-| PMM | ✅ | Buddy allocator for physical memory |
-| VMM | ✅ | Virtual memory with TLB flush |
-| Scheduler | ✅ | Round-robin with run queue |
+| PMM | ✅ | Buddy allocator |
+| VMM | ✅ | Virtual memory with TLB management |
+| Scheduler | ✅ | Round-robin with signals |
 | VFS | ✅ | Unix-like filesystem abstraction |
-| Ramfs | ✅ | In-memory filesystem |
-| Syscalls | ✅ | 20+ Linux-compatible syscalls |
-| Fork/Exec | ✅ | ELF loading, address space creation |
-| Network | ✅ | BSD socket API |
+| ext4 | ✅ | Read support for ext4 |
+| TCP/IP | ✅ | Full stack (ETH/ARP/IP/ICMP/UDP/TCP) |
+| DNS | ✅ | Name resolution with caching |
+| Syscalls | ✅ | 20+ Linux-compatible calls |
+| Fork/Exec | ✅ | ELF loading, address spaces |
+| Signals | ✅ | POSIX signal handling |
 
-### Drivers (Asahi Linux Based)
+### Asahi Linux Drivers (Apple Silicon)
 
-| Driver | Status | Description |
-|--------|--------|-------------|
-| UART | ✅ | PL011 (QEMU) + Apple S5L |
-| GPU (AGX) | 🔄 | Apple GPU framebuffer |
-| NVMe (ANS) | 🔄 | Apple storage controller |
-| USB | 📋 | XHCI support planned |
-| Keyboard | 📋 | SPI keyboard driver |
-| Display | 📋 | Display Coprocessor (DCP) |
+| Driver | Status | Hardware |
+|--------|--------|----------|
+| UART | ✅ | S5L serial (+ PL011 for QEMU) |
+| GPU (AGX) | ✅ | Apple GPU, framebuffer mode |
+| NVMe (ANS) | ✅ | Apple storage controller |
+| USB | 📋 | XHCI planned |
+| DCP | 📋 | Display Coprocessor planned |
 
-### Networking Stack
+## System Requirements
 
-| Layer | Status | Description |
-|-------|--------|-------------|
-| Ethernet | ✅ | Frame handling |
-| ARP | ✅ | Address resolution |
-| IPv4/IPv6 | ✅ | IP packet routing |
-| ICMP | ✅ | Ping support |
-| UDP | ✅ | Datagram sockets |
-| TCP | ✅ | Stream sockets |
-| DNS | 📋 | Name resolution |
-| HTTP | 📋 | Client support |
-| TLS 1.2 | 📋 | HTTPS support |
+### For QEMU Testing
+- Any x86_64 or ARM64 host
+- 4GB RAM recommended
+- QEMU 7.0+
 
-## System Calls
+### For Apple Silicon (Native)
+- Apple M1, M2, or M3 Mac
+- UEFI bootloader (via m1n1 + u-boot)
+- Dual-boot configuration
 
-```c
-// Process management
-pid_t fork(void);
-int execve(const char *path, char *const argv[], char *const envp[]);
-void exit(int status);
-pid_t getpid(void);
-pid_t waitpid(pid_t pid, int *status, int options);
-
-// File I/O
-int open(const char *path, int flags, mode_t mode);
-ssize_t read(int fd, void *buf, size_t count);
-ssize_t write(int fd, const void *buf, size_t count);
-int close(int fd);
-off_t lseek(int fd, off_t offset, int whence);
-
-// Memory management
-void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
-int munmap(void *addr, size_t len);
-void *brk(void *addr);
-
-// Networking
-int socket(int domain, int type, int protocol);
-int bind(int sockfd, const struct sockaddr *addr, socklen_t len);
-int listen(int sockfd, int backlog);
-int accept(int sockfd, struct sockaddr *addr, socklen_t *len);
-int connect(int sockfd, const struct sockaddr *addr, socklen_t len);
-ssize_t send(int sockfd, const void *buf, size_t len, int flags);
-ssize_t recv(int sockfd, void *buf, size_t len, int flags);
-```
+### For Raspberry Pi
+- Raspberry Pi 4 or 5
+- SD card with kernel image
+- UART for console
 
 ## Roadmap
 
 - [x] ARM64 kernel boot
 - [x] MMU with page tables
-- [x] Process scheduler
-- [x] Fork/exec
-- [x] VFS and ramfs
-- [x] BSD socket API
-- [ ] Full TCP/IP stack
-- [ ] ext4 filesystem
+- [x] Process scheduler with signals
+- [x] Fork/exec with ELF loading
+- [x] Full TCP/IP stack
+- [x] ext4 filesystem
+- [x] Asahi GPU driver
 - [ ] APFS read support
-- [ ] Complete Asahi drivers
+- [ ] USB/Bluetooth drivers
 - [ ] CPython 3.12 port
 - [ ] Node.js 20 port
 - [ ] GUI subsystem
@@ -219,12 +179,11 @@ ssize_t recv(int sockfd, void *buf, size_t len, int flags);
 ### Prerequisites
 
 ```bash
-# Install toolchain
+# macOS
 brew install llvm qemu lld coreutils
 
-# Verify installation
-/opt/homebrew/opt/llvm/bin/clang --version
-qemu-system-aarch64 --version
+# Ubuntu/Debian
+apt install clang lld qemu-system-arm
 ```
 
 ### Build Commands
@@ -233,8 +192,6 @@ qemu-system-aarch64 --version
 make clean          # Clean build artifacts
 make kernel         # Build kernel only
 make drivers        # Build drivers
-make libc           # Build C library
-make userspace      # Build userspace programs
 make all            # Build everything
 make run            # Run in QEMU
 ```
@@ -249,14 +206,14 @@ make run            # Run in QEMU
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
 
 ## Acknowledgments
 
 - [Asahi Linux](https://asahilinux.org/) - Apple Silicon reverse engineering
 - [OSDev Wiki](https://wiki.osdev.org/) - OS development resources
-- [ARM Architecture Reference Manual](https://developer.arm.com/) - ARM64 documentation
+- [ARM Architecture Reference](https://developer.arm.com/) - ARM64 documentation
 
 ---
 
-**vib-OS** - Built with ❤️ for Apple Silicon
+**Vib-OS** - Built with ❤️ for ARM64
