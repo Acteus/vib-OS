@@ -171,12 +171,42 @@ static void init_subsystems(void *dtb)
     printk(KERN_INFO "  Mounting devfs...\n");
     
     /* ================================================================= */
-    /* Phase 5: Device Drivers */
+    /* Phase 5: Device Drivers & GUI */
     /* ================================================================= */
     
     printk(KERN_INFO "[INIT] Phase 5: Device Drivers\n");
     
-    printk(KERN_INFO "  Loading display driver...\n");
+    /* Initialize framebuffer driver */
+    printk(KERN_INFO "  Loading framebuffer driver...\n");
+    extern int fb_init(void);
+    extern void fb_get_info(uint32_t **buffer, uint32_t *width, uint32_t *height);
+    fb_init();
+    
+    /* Initialize GUI windowing system */
+    printk(KERN_INFO "  Initializing GUI...\n");
+    extern int gui_init(uint32_t *framebuffer, uint32_t width, uint32_t height, uint32_t pitch);
+    extern struct window *gui_create_window(const char *title, int x, int y, int w, int h);
+    extern void gui_compose(void);
+    extern void gui_draw_cursor(void);
+    
+    uint32_t *fb_buffer;
+    uint32_t fb_width, fb_height;
+    fb_get_info(&fb_buffer, &fb_width, &fb_height);
+    
+    if (fb_buffer) {
+        gui_init(fb_buffer, fb_width, fb_height, fb_width * 4);
+        
+        /* Create demo windows */
+        gui_create_window("Terminal", 50, 50, 400, 300);
+        gui_create_window("File Manager", 200, 100, 450, 350);
+        
+        /* Compose and display desktop */
+        gui_compose();
+        gui_draw_cursor();
+        
+        printk(KERN_INFO "  GUI desktop ready!\\n");
+    }
+    
     printk(KERN_INFO "  Loading keyboard driver...\n");
     printk(KERN_INFO "  Loading NVMe driver...\n");
     printk(KERN_INFO "  Loading USB driver...\n");

@@ -239,6 +239,16 @@ run: kernel
 	@echo "[RUN] Starting Vib-OS in QEMU..."
 	@qemu-system-aarch64 -M virt,gic-version=3 -cpu max -m 4G -nographic -kernel $(KERNEL_BINARY)
 
+run-gui: kernel
+	@echo "[RUN] Starting Vib-OS with GUI display..."
+	@qemu-system-aarch64 -M virt,gic-version=3 \
+		-cpu max -m 4G \
+		-device virtio-gpu-pci \
+		-device virtio-keyboard-pci \
+		-device virtio-mouse-pci \
+		-serial stdio \
+		-kernel $(KERNEL_BINARY)
+
 # ============================================================================
 # Toolchain Setup
 # ============================================================================
