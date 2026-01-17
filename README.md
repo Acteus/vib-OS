@@ -1,16 +1,23 @@
 # Vib-OS
 
-**A Production-Grade ARM64 Operating System**
+**A Production-Grade ARM64 Operating System with GUI**
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-ARM64-blue)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%20%7C%20M2%20%7C%20M3-orange)
+![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-4%20%7C%205-red)
+![Lines](https://img.shields.io/badge/lines-14.5k-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ```
         _  _         ___  ____  
  __   _(_)| |__     / _ \/ ___| 
  \ \ / / || '_ \   | | | \___ \ 
+  \ V /| || |_) |  | |_| |___) |
+   \_/ |_||_.__/    \___/|____/ 
+
+Vib-OS v0.4.0 - ARM64 with GUI
+```
   \ V /| || |_) |  | |_| |___) |
    \_/ |_||_.__/    \___/|____/ 
 
