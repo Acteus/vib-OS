@@ -1,3 +1,0 @@
-@echo off
-echo Loading Vib-OS...
-\boot\vib-os.elf

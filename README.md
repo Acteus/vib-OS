@@ -70,11 +70,21 @@ The OS features a modern macOS-inspired desktop with:
 ### Applications
 | App | Features |
 |-----|----------|
-| **Terminal** | VT100 emulation, command prompt |
+| **Terminal** | VT100 emulation, command prompt, app launcher |
 | **Calculator** | Full arithmetic (+−×÷), chained operations |
 | **Files** | Directory browser |
 | **Notepad** | Text editor with keyboard input |
 | **Help** | Usage instructions |
+
+### Terminal Apps (via KAPI)
+| App | Description |
+|-----|-------------|
+| `test` | Basic test - draws red rectangle |
+| `clock` | Graphical clock with uptime display |
+| `snake` | Snake game - mouse controlled! |
+| `sysmon` | System monitor with CPU/memory bars |
+| `mandelbrot` | Fractal renderer demo |
+
 
 ### Input Drivers
 | Device | Status |

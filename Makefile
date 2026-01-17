@@ -1,5 +1,5 @@
-# UnixOS Master Makefile
-# Production-grade ARM64 OS for Apple Silicon
+# Vib-OS Master Makefile
+# ARM64 OS for Apple Silicon and Raspberry Pi
 
 # ============================================================================
 # Configuration

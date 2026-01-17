@@ -94,6 +94,122 @@ static void calc_button_click(char key)
 static char notepad_text[NOTEPAD_MAX_TEXT];
 static int notepad_cursor = 0;
 
+/* Terminal state (global for keyboard input) */
+#define TERM_INPUT_MAX 256
+#define TERM_HISTORY_LINES 16
+static char term_input[TERM_INPUT_MAX];
+static int term_input_len = 0;
+static char term_history[TERM_HISTORY_LINES][80];
+static int term_history_count = 0;
+static int term_scroll = 0;
+
+/* Snake game state */
+#define SNAKE_MAX_LEN 100
+#define SNAKE_GRID_W 20
+#define SNAKE_GRID_H 12
+static int snake_x[SNAKE_MAX_LEN];
+static int snake_y[SNAKE_MAX_LEN];
+static int snake_len = 4;
+static int snake_dir = 1;  /* 0=up, 1=right, 2=down, 3=left */
+static int snake_food_x = 10;
+static int snake_food_y = 6;
+static int snake_score = 0;
+static int snake_game_over = 0;
+
+/* Initialize snake game */
+static void snake_init(void)
+{
+    snake_len = 4;
+    snake_dir = 1;
+    snake_score = 0;
+    snake_game_over = 0;
+    /* Start in middle */
+    for (int i = 0; i < snake_len; i++) {
+        snake_x[i] = 5 - i;
+        snake_y[i] = 6;
+    }
+    snake_food_x = 15;
+    snake_food_y = 6;
+}
+
+/* Move snake one step */
+static void snake_move(void)
+{
+    if (snake_game_over) return;
+    
+    /* Calculate new head position */
+    int new_x = snake_x[0];
+    int new_y = snake_y[0];
+    
+    switch (snake_dir) {
+        case 0: new_y--; break;  /* up */
+        case 1: new_x++; break;  /* right */
+        case 2: new_y++; break;  /* down */
+        case 3: new_x--; break;  /* left */
+    }
+    
+    /* Wrap around */
+    if (new_x < 0) new_x = SNAKE_GRID_W - 1;
+    if (new_x >= SNAKE_GRID_W) new_x = 0;
+    if (new_y < 0) new_y = SNAKE_GRID_H - 1;
+    if (new_y >= SNAKE_GRID_H) new_y = 0;
+    
+    /* Check self-collision */
+    for (int i = 0; i < snake_len; i++) {
+        if (snake_x[i] == new_x && snake_y[i] == new_y) {
+            snake_game_over = 1;
+            return;
+        }
+    }
+    
+    /* Check food collision */
+    int ate_food = (new_x == snake_food_x && new_y == snake_food_y);
+    if (ate_food) {
+        snake_score += 10;
+        if (snake_len < SNAKE_MAX_LEN - 1) {
+            snake_len++;
+        }
+        /* New food position (simple pseudo-random) */
+        snake_food_x = (snake_food_x * 7 + 3) % SNAKE_GRID_W;
+        snake_food_y = (snake_food_y * 5 + 7) % SNAKE_GRID_H;
+    }
+    
+    /* Move body */
+    for (int i = snake_len - 1; i > 0; i--) {
+        snake_x[i] = snake_x[i-1];
+        snake_y[i] = snake_y[i-1];
+    }
+    snake_x[0] = new_x;
+    snake_y[0] = new_y;
+}
+
+/* Snake key handler */
+static void snake_key(int key)
+{
+    if (snake_game_over) {
+        /* Any key restarts */
+        snake_init();
+        return;
+    }
+    
+    int new_dir = snake_dir;
+    
+    /* Arrow keys (special codes from virtio keyboard) */
+    if (key == 0x100 || key == 'w' || key == 'W') new_dir = 0;  /* Up */
+    else if (key == 0x103 || key == 'd' || key == 'D') new_dir = 1;  /* Right */
+    else if (key == 0x101 || key == 's' || key == 'S') new_dir = 2;  /* Down */
+    else if (key == 0x102 || key == 'a' || key == 'A') new_dir = 3;  /* Left */
+    
+    /* Prevent 180-degree turns */
+    if ((snake_dir == 0 && new_dir == 2) || (snake_dir == 2 && new_dir == 0) ||
+        (snake_dir == 1 && new_dir == 3) || (snake_dir == 3 && new_dir == 1)) {
+        return;
+    }
+    
+    snake_dir = new_dir;
+    snake_move();  /* Move immediately on key press */
+}
+
 static void notepad_key(int key)
 {
     if (key == '\b' || key == 127) {  /* Backspace */
@@ -110,6 +226,43 @@ static void notepad_key(int key)
         if (notepad_cursor < NOTEPAD_MAX_TEXT - 1) {
             notepad_text[notepad_cursor++] = '\n';
             notepad_text[notepad_cursor] = '\0';
+        }
+    }
+}
+
+/* Terminal key handler */
+static void terminal_key(int key)
+{
+    if (key == '\b' || key == 127) {  /* Backspace */
+        if (term_input_len > 0) {
+            term_input_len--;
+            term_input[term_input_len] = '\0';
+        }
+    } else if (key == '\n' || key == '\r') {  /* Enter - execute command */
+        if (term_input_len > 0) {
+            /* Save to history */
+            if (term_history_count < TERM_HISTORY_LINES) {
+                for (int i = 0; i < term_input_len && i < 79; i++) {
+                    term_history[term_history_count][i] = term_input[i];
+                }
+                term_history[term_history_count][term_input_len < 79 ? term_input_len : 79] = '\0';
+                term_history_count++;
+            }
+            
+            /* Check for commands */
+            if (term_input[0] == 'h' && term_input[1] == 'e' && term_input[2] == 'l' && term_input[3] == 'p') {
+                /* Help command */
+            } else if (term_input[0] == 'c' && term_input[1] == 'l' && term_input[2] == 'e' && term_input[3] == 'a' && term_input[4] == 'r') {
+                term_history_count = 0;
+            }
+            /* Clear input */
+            term_input_len = 0;
+            term_input[0] = '\0';
+        }
+    } else if (key >= 32 && key < 127) {  /* Printable */
+        if (term_input_len < TERM_INPUT_MAX - 1) {
+            term_input[term_input_len++] = (char)key;
+            term_input[term_input_len] = '\0';
         }
     }
 }
@@ -568,33 +721,218 @@ static void draw_window(struct window *win)
         gui_draw_string(content_x + 20, yy, "- Type 'help' for commands", 0xCDD6F4, THEME_BG); yy += 16;
         gui_draw_string(content_x + 20, yy, "- Type 'neofetch' for info", 0xCDD6F4, THEME_BG);
     }
+    /* About window */
+    else if (win->title[0] == 'A' && win->title[1] == 'b' && win->title[2] == 'o') {
+        int yy = content_y + 20;
+        int center_x = content_x + content_w / 2;
+        
+        /* OS Logo - large @ symbol centered */
+        gui_draw_string(center_x - 20, yy, "@ @", 0x89B4FA, THEME_BG); yy += 32;
+        
+        /* OS Name - large and centered */
+        gui_draw_string(center_x - 40, yy, "Vib-OS", 0xFFFFFF, THEME_BG); yy += 24;
+        
+        /* Version */
+        gui_draw_string(center_x - 68, yy, "Version 0.5.0", 0xA6ADC8, THEME_BG); yy += 28;
+        
+        /* System info box */
+        gui_draw_rect(content_x + 20, yy, content_w - 40, 80, 0x252535);
+        yy += 10;
+        gui_draw_string(content_x + 30, yy, "Architecture:  ARM64", 0xCDD6F4, 0x252535); yy += 18;
+        gui_draw_string(content_x + 30, yy, "Kernel:        Vib Kernel 0.5", 0xCDD6F4, 0x252535); yy += 18;
+        gui_draw_string(content_x + 30, yy, "Memory:        252 MB", 0xCDD6F4, 0x252535); yy += 18;
+        gui_draw_string(content_x + 30, yy, "Display:       1024 x 768", 0xCDD6F4, 0x252535); yy += 28;
+        
+        /* Copyright */
+        gui_draw_string(content_x + 30, yy, "(c) 2026 Vib-OS Project", 0x6C7086, THEME_BG);
+    }
+    /* Settings window */
+    else if (win->title[0] == 'S' && win->title[1] == 'e' && win->title[2] == 't') {
+        int yy = content_y + 12;
+        
+        /* Header */
+        gui_draw_string(content_x + 12, yy, "System Settings", 0xFFFFFF, THEME_BG); yy += 28;
+        
+        /* Display section */
+        gui_draw_rect(content_x + 10, yy, content_w - 20, 60, 0x252535);
+        gui_draw_string(content_x + 20, yy + 8, "Display", 0x89B4FA, 0x252535);
+        gui_draw_string(content_x + 20, yy + 28, "Resolution: 1024 x 768", 0xCDD6F4, 0x252535);
+        gui_draw_string(content_x + 20, yy + 44, "Color Depth: 32-bit", 0xCDD6F4, 0x252535);
+        yy += 70;
+        
+        /* Sound section */
+        gui_draw_rect(content_x + 10, yy, content_w - 20, 44, 0x252535);
+        gui_draw_string(content_x + 20, yy + 8, "Sound", 0x89B4FA, 0x252535);
+        gui_draw_string(content_x + 20, yy + 26, "Audio: Disabled", 0x6C7086, 0x252535);
+        yy += 54;
+        
+        /* Network section */
+        gui_draw_rect(content_x + 10, yy, content_w - 20, 44, 0x252535);
+        gui_draw_string(content_x + 20, yy + 8, "Network", 0x89B4FA, 0x252535);
+        gui_draw_string(content_x + 20, yy + 26, "Status: Not connected", 0x6C7086, 0x252535);
+        yy += 54;
+        
+        /* About button */
+        gui_draw_rect(content_x + 10, yy, 100, 28, 0x3B82F6);
+        gui_draw_string(content_x + 24, yy + 6, "About...", 0xFFFFFF, 0x3B82F6);
+    }
+    /* Clock window */
+    else if (win->title[0] == 'C' && win->title[1] == 'l' && win->title[2] == 'o') {
+        int center_x = content_x + content_w / 2;
+        int center_y = content_y + content_h / 2;
+        int radius = 60;
+        
+        /* Clock face - white circle */
+        for (int dy = -radius; dy <= radius; dy++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                if (dx*dx + dy*dy <= radius*radius) {
+                    uint32_t color = (dx*dx + dy*dy <= (radius-3)*(radius-3)) ? 0xFFFFFF : 0x3B82F6;
+                    draw_pixel(center_x + dx, center_y + dy, color);
+                }
+            }
+        }
+        
+        /* Hour markers */
+        for (int h = 0; h < 12; h++) {
+            /* Simple markers at 12, 3, 6, 9 positions */
+            int mx = center_x + (h == 3 ? 50 : (h == 9 ? -50 : 0));
+            int my = center_y + (h == 0 ? -50 : (h == 6 ? 50 : 0));
+            if (h == 0 || h == 3 || h == 6 || h == 9) {
+                gui_draw_rect(mx - 3, my - 3, 6, 6, 0x3B82F6);
+            }
+        }
+        
+        /* Clock hands - hour (short) pointing to ~10:10 */
+        for (int i = 0; i < 25; i++) {
+            draw_pixel(center_x - i/2, center_y - i*3/4, 0x222222);
+            draw_pixel(center_x - i/2 + 1, center_y - i*3/4, 0x222222);
+        }
+        /* Minute hand (long) */
+        for (int i = 0; i < 40; i++) {
+            draw_pixel(center_x + i/3, center_y - i, 0x444444);
+        }
+        /* Center dot */
+        for (int dy = -3; dy <= 3; dy++) {
+            for (int dx = -3; dx <= 3; dx++) {
+                if (dx*dx + dy*dy <= 9) {
+                    draw_pixel(center_x + dx, center_y + dy, 0xEF4444);
+                }
+            }
+        }
+        
+        /* Time display below */
+        gui_draw_string(center_x - 28, center_y + radius + 15, "12:10", 0xFFFFFF, THEME_BG);
+    }
+    /* Game window */
+    else if (win->title[0] == 'G' && win->title[1] == 'a' && win->title[2] == 'm') {
+        int yy = content_y + 15;
+        
+        /* Header */
+        if (snake_game_over) {
+            gui_draw_string(content_x + 12, yy, "GAME OVER! Press any key", 0xEF4444, THEME_BG);
+        } else {
+            gui_draw_string(content_x + 12, yy, "Snake Game - WASD to move", 0x89B4FA, THEME_BG);
+        }
+        yy += 28;
+        
+        /* Game area with border */
+        int game_w = content_w - 24;
+        int game_h = 180;
+        int game_x = content_x + 12;
+        int game_y = yy;
+        gui_draw_rect_outline(game_x, game_y, game_w, game_h, 0x3B82F6, 2);
+        gui_draw_rect(game_x + 2, game_y + 2, game_w - 4, game_h - 4, 0x101018);
+        
+        /* Calculate cell size */
+        int cell_w = (game_w - 4) / SNAKE_GRID_W;
+        int cell_h = (game_h - 4) / SNAKE_GRID_H;
+        
+        /* Draw food */
+        int fx = game_x + 2 + snake_food_x * cell_w + 2;
+        int fy = game_y + 2 + snake_food_y * cell_h + 2;
+        gui_draw_rect(fx, fy, cell_w - 4, cell_h - 4, 0xEF4444);
+        
+        /* Draw snake */
+        for (int i = 0; i < snake_len; i++) {
+            int sx = game_x + 2 + snake_x[i] * cell_w + 1;
+            int sy = game_y + 2 + snake_y[i] * cell_h + 1;
+            uint32_t color = (i == 0) ? 0x22C55E : 0x16A34A;  /* Head is brighter */
+            if (i == snake_len - 1) color = 0x15803D;  /* Tail is darker */
+            gui_draw_rect(sx, sy, cell_w - 2, cell_h - 2, color);
+        }
+        
+        /* Score display */
+        char score_str[32];
+        score_str[0] = 'S'; score_str[1] = 'c'; score_str[2] = 'o';
+        score_str[3] = 'r'; score_str[4] = 'e'; score_str[5] = ':';
+        score_str[6] = ' ';
+        /* Convert score to string */
+        int s = snake_score;
+        int pos = 7;
+        if (s == 0) {
+            score_str[pos++] = '0';
+        } else {
+            int temp[10], ti = 0;
+            while (s > 0) { temp[ti++] = s % 10; s /= 10; }
+            while (ti > 0) { score_str[pos++] = '0' + temp[--ti]; }
+        }
+        score_str[pos] = '\0';
+        
+        yy += game_h + 8;
+        gui_draw_string(game_x + 8, yy - 16, score_str, 0xFFFFFF, 0x101018);
+        
+        /* Controls hint */
+        gui_draw_string(content_x + 12, yy, "WASD or Arrow keys", 0x6C7086, THEME_BG);
+    }
     /* Terminal */
     else if (win->title[0] == 'T' && win->title[1] == 'e' && win->title[2] == 'r') {
-        /* Terminal welcome and prompt - clip to window width */
-        int max_x = content_x + content_w - 8;  /* Right edge */
+        /* Terminal with real input buffer */
+        int max_x = content_x + content_w - 8;
         int yy = content_y + 8;
+        int tx;
         
-        /* Draw each string character by character, stopping at window edge */
-        const char *line1 = "Vib-OS Terminal v1.0";
-        int tx = content_x + 8;
-        for (int i = 0; line1[i] && tx < max_x; i++, tx += 8) {
-            gui_draw_char(tx, yy, line1[i], 0x94E2D5, THEME_BG);
+        /* Header */
+        const char *header = "Vib-OS Terminal v2.0";
+        tx = content_x + 8;
+        for (int i = 0; header[i] && tx < max_x; i++, tx += 8) {
+            gui_draw_char(tx, yy, header[i], 0x94E2D5, THEME_BG);
         }
         yy += 18;
         
-        const char *line2 = "Type 'help' for commands.";
+        const char *help_hint = "Type 'help' for commands. 'clear' to reset.";
         tx = content_x + 8;
-        for (int i = 0; line2[i] && tx < max_x; i++, tx += 8) {
-            gui_draw_char(tx, yy, line2[i], 0xCDD6F4, THEME_BG);
+        for (int i = 0; help_hint[i] && tx < max_x; i++, tx += 8) {
+            gui_draw_char(tx, yy, help_hint[i], 0x6C7086, THEME_BG);
         }
         yy += 24;
         
-        const char *prompt = "vib-os:~$ ";
+        /* Draw command history */
+        (void)term_scroll;  /* Suppress unused warning */
+        for (int h = 0; h < term_history_count && yy < content_y + content_h - 40; h++) {
+            tx = content_x + 8;
+            /* Prompt for history */
+            const char *prompt = "> ";
+            for (int i = 0; prompt[i] && tx < max_x; i++, tx += 8) {
+                gui_draw_char(tx, yy, prompt[i], 0xA6E3A1, THEME_BG);
+            }
+            /* Command text */
+            for (int i = 0; term_history[h][i] && tx < max_x; i++, tx += 8) {
+                gui_draw_char(tx, yy, term_history[h][i], 0xCDD6F4, THEME_BG);
+            }
+            yy += 16;
+        }
+        
+        /* Current prompt with input */
         tx = content_x + 8;
+        const char *prompt = "vib-os:~$ ";
         for (int i = 0; prompt[i] && tx < max_x; i++, tx += 8) {
             gui_draw_char(tx, yy, prompt[i], 0xA6E3A1, THEME_BG);
         }
-        /* Cursor block */
+        /* User input */
+        for (int i = 0; i < term_input_len && tx < max_x; i++, tx += 8) {
+            gui_draw_char(tx, yy, term_input[i], 0xFFFFFF, THEME_BG);
+        }
+        /* Blinking cursor (just a block for now) */
         if (tx < max_x) {
             gui_draw_rect(tx, yy, 8, 16, 0xCDD6F4);
         }
@@ -641,37 +979,76 @@ static void draw_window(struct window *win)
 /* Desktop with Menu Bar and Dock */
 /* ===================================================================== */
 
+/* Menu dropdown state */
+static int menu_open = 0;  /* 0=closed, 1=Apple menu open */
+
 static void draw_menu_bar(void)
 {
-    /* Menu bar background */
-    gui_draw_rect(0, 0, primary_display.width, MENU_BAR_HEIGHT, COLOR_MENU_BG);
+    /* Glossy menu bar - gradient from dark to slightly lighter */
+    for (int y = 0; y < MENU_BAR_HEIGHT; y++) {
+        int brightness = 45 + (y * 10) / MENU_BAR_HEIGHT;  /* 45 to 55 */
+        uint32_t color = (brightness << 16) | (brightness << 8) | (brightness + 5);
+        for (int x = 0; x < (int)primary_display.width; x++) {
+            draw_pixel(x, y, color);
+        }
+    }
+    /* Bottom highlight line */
+    for (int x = 0; x < (int)primary_display.width; x++) {
+        draw_pixel(x, MENU_BAR_HEIGHT - 1, 0x606060);
+    }
     
-    /* Apple logo placeholder */
-    gui_draw_string(12, 6, "@", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    /* Apple logo (using @ as placeholder, bold white) */
+    gui_draw_string(14, 6, "@", 0xFFFFFF, 0x2D2D35);
     
-    /* App name */
-    gui_draw_string(36, 6, "Vib-OS", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    /* Vib-OS name */
+    gui_draw_string(36, 6, "Vib-OS", 0xFFFFFF, 0x303038);
     
-    /* Menu items */
-    gui_draw_string(96, 6, "File", COLOR_MENU_TEXT, COLOR_MENU_BG);
-    gui_draw_string(144, 6, "Edit", COLOR_MENU_TEXT, COLOR_MENU_BG);
-    gui_draw_string(192, 6, "View", COLOR_MENU_TEXT, COLOR_MENU_BG);
-    gui_draw_string(240, 6, "Help", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    /* Menu items with spacing */
+    gui_draw_string(100, 6, "File", 0xDDDDDD, 0x343440);
+    gui_draw_string(150, 6, "Edit", 0xDDDDDD, 0x363645);
+    gui_draw_string(200, 6, "View", 0xDDDDDD, 0x38384A);
+    gui_draw_string(254, 6, "Help", 0xDDDDDD, 0x3A3A4F);
     
     /* Clock on right */
-    gui_draw_string(primary_display.width - 60, 6, "12:00", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    gui_draw_string(primary_display.width - 52, 6, "12:00", 0xFFFFFF, 0x3E3E55);
+    
+    /* Draw dropdown if open */
+    if (menu_open == 1) {
+        int dropdown_x = 8;
+        int dropdown_y = MENU_BAR_HEIGHT;
+        int dropdown_w = 160;
+        int dropdown_h = 80;
+        
+        /* Dropdown shadow */
+        gui_draw_rect(dropdown_x + 3, dropdown_y + 3, dropdown_w, dropdown_h, 0x151520);
+        
+        /* Dropdown background */
+        gui_draw_rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h, 0x404050);
+        gui_draw_rect_outline(dropdown_x, dropdown_y, dropdown_w, dropdown_h, 0x606070, 1);
+        
+        /* Menu items */
+        gui_draw_string(dropdown_x + 12, dropdown_y + 10, "About Vib-OS", 0xFFFFFF, 0x404050);
+        
+        /* Separator line */
+        for (int i = dropdown_x + 8; i < dropdown_x + dropdown_w - 8; i++) {
+            draw_pixel(i, dropdown_y + 32, 0x555565);
+        }
+        
+        gui_draw_string(dropdown_x + 12, dropdown_y + 40, "Settings...", 0xCCCCCC, 0x404050);
+        gui_draw_string(dropdown_x + 12, dropdown_y + 58, "Restart", 0xCCCCCC, 0x404050);
+    }
 }
 
 /* Dock icons */
 #include "icons.h"
 
 static const char *dock_labels[] = {
-    "Term", "Files", "Calc", "Edit", "Help"
+    "Term", "Files", "Calc", "Notes", "Set", "Clock", "Game", "Help"
 };
-#define NUM_DOCK_ICONS 5
-#define DOCK_ICON_SIZE 40   /* Display size */
+#define NUM_DOCK_ICONS 8
+#define DOCK_ICON_SIZE 44   /* Slightly smaller for more icons */
 #define DOCK_ICON_MARGIN 4  /* Padding inside dock pill */
-#define DOCK_PADDING 16     /* Space between icons */
+#define DOCK_PADDING 8      /* Space between icons */
 
 /* Draw a 32x32 bitmap icon scaled to display size */
 static void draw_icon(int x, int y, int size, const unsigned char *bitmap, uint32_t fg, uint32_t bg)
@@ -693,38 +1070,161 @@ static void draw_icon(int x, int y, int size, const unsigned char *bitmap, uint3
     }
 }
 
+/* Draw rounded rectangle helper */
+static void draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t color)
+{
+    /* Main body */
+    gui_draw_rect(x + r, y, w - 2*r, h, color);
+    gui_draw_rect(x, y + r, r, h - 2*r, color);
+    gui_draw_rect(x + w - r, y + r, r, h - 2*r, color);
+    
+    /* Corners */
+    for (int cy = -r; cy <= r; cy++) {
+        for (int cx = -r; cx <= r; cx++) {
+            if (cx*cx + cy*cy <= r*r) {
+                draw_pixel(x + r + cx, y + r + cy, color);
+                draw_pixel(x + w - r - 1 + cx, y + r + cy, color);
+                draw_pixel(x + r + cx, y + h - r - 1 + cy, color);
+                draw_pixel(x + w - r - 1 + cx, y + h - r - 1 + cy, color);
+            }
+        }
+    }
+}
+
+/* Icon background colors for modern look */
+static const uint32_t icon_colors[] = {
+    0x2D5A27,  /* Terminal - green */
+    0x3B82F6,  /* Files - blue */
+    0xF97316,  /* Calculator - orange */
+    0xEAB308,  /* Notepad - yellow */
+    0x6B7280,  /* Settings - gray */
+    0x8B5CF6,  /* Clock - purple */
+    0xEF4444,  /* Game - red */
+    0x06B6D4,  /* Help - cyan */
+};
+
 static void draw_dock(void)
 {
-    int dock_content_w = NUM_DOCK_ICONS * (DOCK_ICON_SIZE + DOCK_PADDING) - DOCK_PADDING + 40;
+    int dock_content_w = NUM_DOCK_ICONS * (DOCK_ICON_SIZE + DOCK_PADDING) - DOCK_PADDING + 32;
     int dock_x = (primary_display.width - dock_content_w) / 2;
-    int dock_y = primary_display.height - DOCK_HEIGHT + 10;
-    int dock_h = DOCK_HEIGHT - 20;
+    int dock_y = primary_display.height - DOCK_HEIGHT + 6;
+    int dock_h = DOCK_HEIGHT - 12;
     
-    /* Dock background pill */
-    gui_draw_rect(dock_x, dock_y, dock_content_w, dock_h, COLOR_DOCK_BG);
-    gui_draw_rect_outline(dock_x, dock_y, dock_content_w, dock_h, COLOR_DOCK_BORDER, 1);
+    /* Frosted glass dock background - lighter and translucent */
+    uint32_t glass_base = 0x404050;
+    draw_rounded_rect(dock_x, dock_y, dock_content_w, dock_h, 16, glass_base);
     
-    /* Draw icons */
-    int icon_x = dock_x + 20;
+    /* Top highlight for glass depth */
+    for (int i = dock_x + 16; i < dock_x + dock_content_w - 16; i++) {
+        draw_pixel(i, dock_y, 0x606070);
+        draw_pixel(i, dock_y + 1, 0x505060);
+    }
+    
+    /* Inner glow/border */
+    for (int i = dock_x + 16; i < dock_x + dock_content_w - 16; i++) {
+        draw_pixel(i, dock_y + dock_h - 1, 0x303040);
+        draw_pixel(i, dock_y + dock_h - 2, 0x353545);
+    }
+    
+    /* Draw icons with colored backgrounds */
+    int icon_x = dock_x + 16;
     int icon_y = dock_y + (dock_h - DOCK_ICON_SIZE) / 2;
     
     for (int i = 0; i < NUM_DOCK_ICONS; i++) {
-        /* Draw icon bitmap */
-        draw_icon(icon_x, icon_y, DOCK_ICON_SIZE, dock_icons_bmp[i], THEME_FG, COLOR_DOCK_BG);
+        /* Rounded icon background with color */
+        int icon_bg_x = icon_x - 2;
+        int icon_bg_y = icon_y - 2;
+        int icon_bg_size = DOCK_ICON_SIZE + 4;
+        int icon_r = 10;
+        
+        /* Draw colored rounded square background */
+        uint32_t bg_color = icon_colors[i];
+        gui_draw_rect(icon_bg_x + icon_r, icon_bg_y, icon_bg_size - 2*icon_r, icon_bg_size, bg_color);
+        gui_draw_rect(icon_bg_x, icon_bg_y + icon_r, icon_bg_size, icon_bg_size - 2*icon_r, bg_color);
+        
+        /* Round corners */
+        for (int dy = -icon_r; dy <= icon_r; dy++) {
+            for (int dx = -icon_r; dx <= icon_r; dx++) {
+                if (dx*dx + dy*dy <= icon_r*icon_r) {
+                    draw_pixel(icon_bg_x + icon_r + dx, icon_bg_y + icon_r + dy, bg_color);
+                    draw_pixel(icon_bg_x + icon_bg_size - icon_r - 1 + dx, icon_bg_y + icon_r + dy, bg_color);
+                    draw_pixel(icon_bg_x + icon_r + dx, icon_bg_y + icon_bg_size - icon_r - 1 + dy, bg_color);
+                    draw_pixel(icon_bg_x + icon_bg_size - icon_r - 1 + dx, icon_bg_y + icon_bg_size - icon_r - 1 + dy, bg_color);
+                }
+            }
+        }
+        
+        /* Draw white icon on colored background */
+        draw_icon(icon_x, icon_y, DOCK_ICON_SIZE, dock_icons_bmp[i], 0xFFFFFF, bg_color);
         
         icon_x += DOCK_ICON_SIZE + DOCK_PADDING;
     }
 }
 
+/* Draw gradient wallpaper */
+static void draw_wallpaper(void)
+{
+    int start_y = MENU_BAR_HEIGHT;
+    int end_y = primary_display.height - DOCK_HEIGHT;
+    int height = end_y - start_y;
+    
+    for (int y = start_y; y < end_y; y++) {
+        /* Progress through gradient (0.0 to 1.0) */
+        int progress = ((y - start_y) * 256) / height;  /* 0-255 */
+        
+        /* Beautiful gradient: deep purple -> blue -> teal */
+        /* Top: #1a1a2e (dark purple) */
+        /* Middle: #16213e (dark blue) */
+        /* Bottom: #0f3460 (teal blue) */
+        
+        uint8_t r, g, b;
+        if (progress < 128) {
+            /* Top half: purple to blue */
+            int t = progress * 2;  /* 0-255 */
+            r = 26 - (t * 10) / 255;      /* 26 -> 16 */
+            g = 26 - (t * 5) / 255;       /* 26 -> 21 */  
+            b = 46 + (t * 16) / 255;      /* 46 -> 62 */
+        } else {
+            /* Bottom half: blue to teal */
+            int t = (progress - 128) * 2;  /* 0-255 */
+            r = 16 - (t * 1) / 255;       /* 16 -> 15 */
+            g = 21 + (t * 31) / 255;      /* 21 -> 52 */
+            b = 62 + (t * 34) / 255;      /* 62 -> 96 */
+        }
+        
+        uint32_t color = (r << 16) | (g << 8) | b;
+        
+        for (int x = 0; x < (int)primary_display.width; x++) {
+            draw_pixel(x, y, color);
+        }
+    }
+    
+    /* Add subtle stars */
+    static const int star_positions[][2] = {
+        {100, 80}, {250, 120}, {400, 90}, {550, 150}, {700, 100},
+        {150, 200}, {300, 250}, {450, 220}, {600, 280}, {750, 240},
+        {200, 350}, {350, 380}, {500, 340}, {650, 400}, {800, 360},
+        {120, 450}, {280, 480}, {420, 440}, {580, 500}, {720, 460},
+    };
+    
+    for (int i = 0; i < 20; i++) {
+        int sx = star_positions[i][0];
+        int sy = star_positions[i][1] + MENU_BAR_HEIGHT;
+        if (sx < (int)primary_display.width && sy < end_y) {
+            /* Small bright dot for star */
+            draw_pixel(sx, sy, 0xFFFFFF);
+            draw_pixel(sx + 1, sy, 0xAAAAAA);
+            draw_pixel(sx, sy + 1, 0xAAAAAA);
+        }
+    }
+}
+
 static void draw_desktop(void)
 {
-    /* Desktop background */
-    gui_draw_rect(0, MENU_BAR_HEIGHT, 
-                  primary_display.width, 
-                  primary_display.height - MENU_BAR_HEIGHT - DOCK_HEIGHT, 
-                  THEME_BG);
+    /* Draw beautiful gradient wallpaper */
+    draw_wallpaper();
     
-    /* Draw menu bar at top */
+    /* Draw menu bar at top (glass effect) */
     draw_menu_bar();
     
     /* Draw dock at bottom */
@@ -916,11 +1416,23 @@ void gui_handle_key_event(int key)
 {
     /* Route key to focused window */
     if (focused_window && focused_window->visible) {
+        /* Check if it's a Terminal window */
+        if (focused_window->title[0] == 'T' && 
+            focused_window->title[1] == 'e' && 
+            focused_window->title[2] == 'r') {
+            terminal_key(key);
+        }
         /* Check if it's a Notepad window */
-        if (focused_window->title[0] == 'N' && 
+        else if (focused_window->title[0] == 'N' && 
             focused_window->title[1] == 'o' && 
             focused_window->title[2] == 't') {
             notepad_key(key);
+        }
+        /* Check if it's a Game window */
+        else if (focused_window->title[0] == 'G' && 
+            focused_window->title[1] == 'a' && 
+            focused_window->title[2] == 'm') {
+            snake_key(key);
         }
         /* Call window's key handler if set */
         if (focused_window->on_key) {
@@ -974,25 +1486,72 @@ void gui_handle_mouse_event(int x, int y, int buttons)
     /* Check if clicking on a window */
     if (!left_click) return;
     
-    /* Check menu bar clicks */
-    if (y < MENU_BAR_HEIGHT) {
-        /* Menu layout: @ Vib-OS | File | Edit | View | Help */
-        /* File is around x=96, Edit=144, View=192, Help=240 */
-        if (x >= 96 && x < 140) {
-            /* File menu - open Files window */
-            gui_create_window("Files", 150, 80, 400, 350);
-            return;
-        } else if (x >= 144 && x < 192) {
-            /* Edit menu - run test app */
-            extern int app_run(const char *name, int argc, char **argv);
-            app_run("test", 0, 0);
-            return;
-        } else if (x >= 240 && x < 300) {
-            /* Help menu - open Help window */
-            gui_create_window("Help", 200, 100, 350, 280);
+    /* Check menu bar and dropdown clicks */
+    if (y < MENU_BAR_HEIGHT || (menu_open && y < MENU_BAR_HEIGHT + 80 && x < 170)) {
+        /* If dropdown is open, check dropdown item clicks */
+        if (menu_open == 1 && y >= MENU_BAR_HEIGHT && y < MENU_BAR_HEIGHT + 80 && x >= 8 && x < 168) {
+            int dropdown_y = MENU_BAR_HEIGHT;
+            
+            /* About Vib-OS (y offset 10-28) */
+            if (y >= dropdown_y + 8 && y < dropdown_y + 30) {
+                gui_create_window("About", 280, 180, 420, 260);
+                menu_open = 0;
+                return;
+            }
+            /* Settings (y offset 40-56) */
+            if (y >= dropdown_y + 36 && y < dropdown_y + 56) {
+                gui_create_window("Settings", 200, 120, 380, 320);
+                menu_open = 0;
+                return;
+            }
+            /* Restart (y offset 58-76) */
+            if (y >= dropdown_y + 54 && y < dropdown_y + 76) {
+                /* Just close menu for now */
+                menu_open = 0;
+                return;
+            }
+            menu_open = 0;
             return;
         }
+        
+        /* Menu bar clicks */
+        if (y < MENU_BAR_HEIGHT) {
+            /* Apple menu / Vib-OS logo area (x < 90) */
+            if (x < 90) {
+                menu_open = menu_open ? 0 : 1;  /* Toggle */
+                return;
+            }
+            
+            /* Close menu if clicking elsewhere on menu bar */
+            menu_open = 0;
+            
+            /* File menu (x=100-145) */
+            if (x >= 100 && x < 145) {
+                gui_create_window("Files", 150, 80, 400, 350);
+                return;
+            }
+            /* Edit menu (x=150-195) */
+            if (x >= 150 && x < 195) {
+                gui_create_window("Notepad", 180, 100, 450, 350);
+                return;
+            }
+            /* View menu (x=200-248) */
+            if (x >= 200 && x < 248) {
+                /* Toggle a window or do nothing */
+                return;
+            }
+            /* Help menu (x=254-300) */
+            if (x >= 254 && x < 310) {
+                gui_create_window("Help", 200, 100, 350, 280);
+                return;
+            }
+        }
         return;
+    }
+    
+    /* Close menu if clicking elsewhere */
+    if (menu_open) {
+        menu_open = 0;
     }
     
     for (struct window *win = window_stack; win; win = win->next) {
@@ -1096,13 +1655,13 @@ void gui_handle_mouse_event(int x, int y, int buttons)
     }
     
     /* Check dock click */
-    int dock_content_w = NUM_DOCK_ICONS * (DOCK_ICON_SIZE + DOCK_PADDING) - DOCK_PADDING + 40;
+    int dock_content_w = NUM_DOCK_ICONS * (DOCK_ICON_SIZE + DOCK_PADDING) - DOCK_PADDING + 32;
     int dock_x = (primary_display.width - dock_content_w) / 2;
-    int dock_y = primary_display.height - DOCK_HEIGHT + 10;
-    int dock_h = DOCK_HEIGHT - 20;
+    int dock_y = primary_display.height - DOCK_HEIGHT + 6;
+    int dock_h = DOCK_HEIGHT - 12;
     
     if (y >= dock_y && y < dock_y + dock_h) {
-        int icon_x = dock_x + 20;
+        int icon_x = dock_x + 16;
         int icon_y_start = dock_y + (dock_h - DOCK_ICON_SIZE) / 2;
         
         /* Window spawn position with staggering */
@@ -1112,10 +1671,10 @@ void gui_handle_mouse_event(int x, int y, int buttons)
         for (int i = 0; i < NUM_DOCK_ICONS; i++) {
             if (x >= icon_x && x < icon_x + DOCK_ICON_SIZE &&
                 y >= icon_y_start && y < icon_y_start + DOCK_ICON_SIZE) {
-                /* Clicked on icon i - create window */
+                /* Clicked on icon i - create window or run app */
                 switch (i) {
                     case 0: /* Terminal */
-                        gui_create_window("Terminal", spawn_x, spawn_y, 400, 300);
+                        gui_create_window("Terminal", spawn_x, spawn_y, 450, 320);
                         break;
                     case 1: /* Files */
                         gui_create_window("Files", spawn_x + 30, spawn_y + 20, 400, 350);
@@ -1126,7 +1685,16 @@ void gui_handle_mouse_event(int x, int y, int buttons)
                     case 3: /* Notepad */
                         gui_create_window("Notepad", spawn_x + 90, spawn_y + 60, 450, 350);
                         break;
-                    case 4: /* Help */
+                    case 4: /* Settings */
+                        gui_create_window("Settings", spawn_x + 20, spawn_y + 30, 380, 320);
+                        break;
+                    case 5: /* Clock */
+                        gui_create_window("Clock", spawn_x + 50, spawn_y + 40, 260, 200);
+                        break;
+                    case 6: /* Game */
+                        gui_create_window("Game", spawn_x + 70, spawn_y + 50, 400, 320);
+                        break;
+                    case 7: /* Help */
                         gui_create_window("Help", spawn_x + 120, spawn_y + 80, 350, 280);
                         break;
                 }

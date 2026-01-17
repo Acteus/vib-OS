@@ -16,9 +16,9 @@
 #include "fs/vfs.h"
 
 /* Kernel version */
-#define UNIXOS_VERSION_MAJOR 0
-#define UNIXOS_VERSION_MINOR 1
-#define UNIXOS_VERSION_PATCH 0
+#define VIBOS_VERSION_MAJOR 0
+#define VIBOS_VERSION_MINOR 5
+#define VIBOS_VERSION_PATCH 0
 
 /* External symbols from linker script */
 extern char __kernel_start[];
@@ -75,18 +75,18 @@ void kernel_main(void *dtb)
 static void print_banner(void)
 {
     printk("\n");
-    printk("  _   _       _       ___  ____  \n");
-    printk(" | | | |_ __ (_)_  __/ _ \\/ ___| \n");
-    printk(" | | | | '_ \\| \\ \\/ / | | \\___ \\ \n");
-    printk(" | |_| | | | | |>  <| |_| |___) |\n");
-    printk("  \\___/|_| |_|_/_/\\_\\\\___/|____/ \n");
+    printk("        _  _         ___  ____  \n");
+    printk(" __   _(_)| |__     / _ \\/ ___| \n");
+    printk(" \\ \\ / / || '_ \\   | | | \\___ \\ \n");
+    printk("  \\ V /| || |_) |  | |_| |___) |\n");
+    printk("   \\_/ |_||_.__/    \\___/|____/ \n");
     printk("\n");
-    printk("UnixOS v%d.%d.%d - ARM64\n",
-           UNIXOS_VERSION_MAJOR,
-           UNIXOS_VERSION_MINOR,
-           UNIXOS_VERSION_PATCH);
-    printk("A production-grade Unix-like operating system\n");
-    printk("Copyright (c) 2026 UnixOS Project\n");
+    printk("Vib-OS v%d.%d.%d - ARM64 with GUI\n",
+           VIBOS_VERSION_MAJOR,
+           VIBOS_VERSION_MINOR,
+           VIBOS_VERSION_PATCH);
+    printk("A Unix-like operating system for ARM64\n");
+    printk("Copyright (c) 2026 Vib-OS Project\n");
     printk("\n");
 }
 
