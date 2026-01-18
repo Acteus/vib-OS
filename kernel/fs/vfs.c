@@ -308,25 +308,25 @@ struct file *vfs_open(const char *path, int flags, mode_t mode)
     
     struct file *f = kzalloc(sizeof(struct file), GFP_KERNEL);
     if (!f) return NULL;
-    
+
     f->f_dentry = child;
     f->f_op = child->d_inode->i_fop;
     f->private_data = child->d_inode->i_private;
     f->f_mode = mode;
     f->f_flags = flags;
     f->f_count.counter = 1;
-    
+
     if (f->f_op && f->f_op->open) {
         f->f_op->open(child->d_inode, f);
     }
-    
+
     /* Handle O_TRUNC - reset file position and size to 0 */
     if (flags & O_TRUNC) {
         f->f_pos = 0;
         child->d_inode->i_size = 0;
         /* Truncate operation will be handled by filesystem on write */
     }
-    
+
     return f;
 }
 

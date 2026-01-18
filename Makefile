@@ -56,7 +56,7 @@ CROSS_TARGET := --target=aarch64-unknown-none-elf
 
 # Compiler flags
 # CPU target: generic works on QEMU and most ARM64 hardware
-CFLAGS_COMMON := -Wall -Wextra -Wno-unused-function -ffreestanding -fno-stack-protector \
+CFLAGS_COMMON := -std=gnu11 -Wall -Wextra -Wno-unused-function -ffreestanding -fno-stack-protector \
                  -fno-pic -mcpu=cortex-a72 -O2 -g
 
 CFLAGS_KERNEL := $(CFLAGS_COMMON) $(CROSS_TARGET) \

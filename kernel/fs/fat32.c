@@ -808,7 +808,7 @@ static ssize_t fat32_file_write(struct file *file, const char *buf,
 static int fat32_file_open(struct inode *vfs_inode, struct file *file)
 {
     file->private_data = vfs_inode->i_private;
-    
+
     /* Handle O_TRUNC - reset file size to 0 */
     if (file->f_flags & O_TRUNC) {
         struct fat32_file *ff = (struct fat32_file *)file->private_data;
@@ -822,7 +822,7 @@ static int fat32_file_open(struct inode *vfs_inode, struct file *file)
             printk(KERN_DEBUG "FAT32: Truncated file to 0 bytes\n");
         }
     }
-    
+
     return 0;
 }
 
