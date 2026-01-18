@@ -7,6 +7,7 @@
 #include "types.h"
 #include "printk.h"
 #include "mm/kmalloc.h"
+#include "media/media.h"
 
 /* Forward declare window type */
 struct window;
@@ -362,6 +363,65 @@ static int str_starts_with(const char *str, const char *prefix)
     return 1;
 }
 
+static char to_lower(char c)
+{
+    if (c >= 'A' && c <= 'Z') return (char)(c + 32);
+    return c;
+}
+
+static int str_ends_with_ci(const char *str, const char *suffix)
+{
+    if (!str || !suffix) return 0;
+    int slen = 0;
+    int suflen = 0;
+    while (str[slen]) slen++;
+    while (suffix[suflen]) suflen++;
+    if (suflen == 0 || slen < suflen) return 0;
+    for (int i = 0; i < suflen; i++) {
+        if (to_lower(str[slen - suflen + i]) != to_lower(suffix[i])) return 0;
+    }
+    return 1;
+}
+
+static void build_path(struct terminal *term, const char *input, char *out, int out_size)
+{
+    if (!term || !input || !out || out_size <= 0) return;
+    while (*input == ' ') input++;
+    int len = 0;
+    while (input[len] && input[len] != '\n') len++;
+
+    if (len == 0) {
+        out[0] = '\0';
+        return;
+    }
+
+    if (input[0] == '/') {
+        int i = 0;
+        while (i < len && i < out_size - 1) {
+            out[i] = input[i];
+            i++;
+        }
+        out[i] = '\0';
+        return;
+    }
+
+    int idx = 0;
+    int cwd_len = 0;
+    while (term->cwd[cwd_len]) cwd_len++;
+    for (int i = 0; i < cwd_len && idx < out_size - 1; i++) {
+        out[idx++] = term->cwd[i];
+    }
+    if (idx == 0) {
+        out[idx++] = '/';
+    } else if (out[idx - 1] != '/' && idx < out_size - 1) {
+        out[idx++] = '/';
+    }
+    for (int i = 0; i < len && idx < out_size - 1; i++) {
+        out[idx++] = input[i];
+    }
+    out[idx] = '\0';
+}
+
 #include "fs/vfs.h"
 
 /* Helper for ls command */
@@ -414,6 +474,8 @@ static void term_execute_command(struct terminal *term, const char *cmd)
         term_puts(term, "  browser   - Launch Web Browser\n");
         term_puts(term, "  ping <ip> - Ping remote host\n");
         term_puts(term, "  sound     - Test audio output\n");
+        term_puts(term, "  play <f>  - Play MP3 audio\n");
+        term_puts(term, "  view <f>  - View JPEG image\n");
         term_puts(term, "  neofetch  - System info\n");
     }
     else if (str_starts_with(cmd, "ls")) {
@@ -517,6 +579,54 @@ static void term_execute_command(struct terminal *term, const char *cmd)
     }
     else if (str_starts_with(cmd, "exit")) {
         term_puts(term, "\033[33mGoodbye!\033[0m\n");
+    }
+    else if (str_starts_with(cmd, "play ")) {
+        char path[256];
+        build_path(term, cmd + 5, path, sizeof(path));
+        if (!path[0]) {
+            term_puts(term, "play: missing file\n");
+            return;
+        }
+
+        if (!str_ends_with_ci(path, ".mp3")) {
+            term_puts(term, "play: only .mp3 supported\n");
+            return;
+        }
+
+        uint8_t *data = NULL;
+        size_t size = 0;
+        if (media_load_file(path, &data, &size) != 0) {
+            term_puts(term, "play: failed to read file\n");
+            return;
+        }
+
+        media_audio_t audio;
+        if (media_decode_mp3(data, size, &audio) != 0) {
+            media_free_file(data);
+            term_puts(term, "play: decode failed\n");
+            return;
+        }
+        media_free_file(data);
+
+        extern int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uint32_t sample_rate);
+        intel_hda_play_pcm(audio.samples, audio.sample_count, audio.channels, audio.sample_rate);
+        media_free_audio(&audio);
+    }
+    else if (str_starts_with(cmd, "view ")) {
+        char path[256];
+        build_path(term, cmd + 5, path, sizeof(path));
+        if (!path[0]) {
+            term_puts(term, "view: missing file\n");
+            return;
+        }
+
+        if (!str_ends_with_ci(path, ".jpg") && !str_ends_with_ci(path, ".jpeg")) {
+            term_puts(term, "view: only .jpg/.jpeg supported\n");
+            return;
+        }
+
+        extern void gui_open_image_viewer(const char *path);
+        gui_open_image_viewer(path);
     }
     else if (str_starts_with(cmd, "sound")) {
         term_puts(term, "Playing test tone (440Hz Square Wave)...\n");

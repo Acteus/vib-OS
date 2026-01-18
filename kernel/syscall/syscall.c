@@ -7,6 +7,7 @@
 #include "fs/vfs.h"
 #include "printk.h"
 #include "drivers/uart.h"
+#include "arch/arch.h"
 
 /* ===================================================================== */
 /* System call table */
@@ -378,12 +379,20 @@ long handle_syscall(struct pt_regs *regs)
 
 void handle_sync_exception(struct pt_regs *regs)
 {
-    /* Read exception syndrome register */
+    /* Read exception syndrome register - architecture specific */
+    uint32_t ec, iss;
+    
+#ifdef ARCH_ARM64
     uint64_t esr;
     asm volatile("mrs %0, esr_el1" : "=r" (esr));
     
-    uint32_t ec = (esr >> 26) & 0x3F;  /* Exception class */
-    uint32_t iss = esr & 0x1FFFFFF;    /* Instruction specific syndrome */
+    ec = (esr >> 26) & 0x3F;  /* Exception class */
+    iss = esr & 0x1FFFFFF;    /* Instruction specific syndrome */
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    /* x86 uses interrupt numbers instead of ESR */
+    ec = 0;  /* Not used on x86 */
+    iss = 0;
+#endif
     
     switch (ec) {
         case 0x15:  /* SVC instruction from AArch64 */
@@ -392,28 +401,39 @@ void handle_sync_exception(struct pt_regs *regs)
             
         case 0x20:  /* Instruction abort from lower EL */
         case 0x21:  /* Instruction abort from same EL */
-            printk(KERN_EMERG "Instruction abort at PC=0x%llx\n", (unsigned long long)regs->pc);
+            printk(KERN_EMERG "Instruction abort at PC=0x%llx\n", 
+                   (unsigned long long)arch_context_get_pc(regs));
             panic("Instruction abort");
             break;
             
         case 0x24:  /* Data abort from lower EL */
         case 0x25:  /* Data abort from same EL */
             {
+#ifdef ARCH_ARM64
                 uint64_t far;
                 asm volatile("mrs %0, far_el1" : "=r" (far));
-                printk(KERN_EMERG "Data abort at PC=0x%llx, FAR=0x%llx\n", (unsigned long long)regs->pc, (unsigned long long)far);
+                printk(KERN_EMERG "Data abort at PC=0x%llx, FAR=0x%llx\n", 
+                       (unsigned long long)arch_context_get_pc(regs), (unsigned long long)far);
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+                uint64_t cr2;
+                asm volatile("mov %%cr2, %0" : "=r"(cr2));
+                printk(KERN_EMERG "Page fault at PC=0x%llx, CR2=0x%llx\n",
+                       (unsigned long long)arch_context_get_pc(regs), (unsigned long long)cr2);
+#endif
                 panic("Data abort");
             }
             break;
             
         case 0x00:  /* Unknown reason */
-            printk(KERN_EMERG "Unknown exception at PC=0x%llx\n", (unsigned long long)regs->pc);
+            printk(KERN_EMERG "Unknown exception at PC=0x%llx\n", 
+                   (unsigned long long)arch_context_get_pc(regs));
             panic("Unknown exception");
             break;
             
         default:
             printk(KERN_EMERG "Unhandled exception class 0x%x, ISS=0x%x\n", ec, iss);
-            printk(KERN_EMERG "PC=0x%llx\n", (unsigned long long)regs->pc);
+            printk(KERN_EMERG "PC=0x%llx\n", 
+                   (unsigned long long)arch_context_get_pc(regs));
             panic("Unhandled exception");
             break;
     }

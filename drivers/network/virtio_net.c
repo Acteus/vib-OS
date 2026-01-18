@@ -124,7 +124,11 @@ static struct virt_queue tx_q;
 /* ===================================================================== */
 
 static void mmio_barrier(void) {
+#ifdef ARCH_ARM64
     asm volatile("dsb sy" ::: "memory");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    asm volatile("mfence" ::: "memory");
+#endif
 }
 
 static uint32_t mmio_read32(volatile uint32_t *addr) {

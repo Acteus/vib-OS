@@ -542,6 +542,34 @@ int ramfs_create_file(const char *path, mode_t mode, const char *content)
     return 0;
 }
 
+int ramfs_create_file_bytes(const char *path, mode_t mode, const uint8_t *data, size_t size)
+{
+    if (!ramfs_sb.root) {
+        return -ENOENT;
+    }
+
+    struct ramfs_inode *file = ramfs_alloc_inode(S_IFREG | mode, path);
+    if (!file) {
+        return -ENOMEM;
+    }
+
+    if (data && size > 0) {
+        file->data = kmalloc(size, GFP_KERNEL);
+        if (!file->data) {
+            return -ENOMEM;
+        }
+        for (size_t i = 0; i < size; i++) {
+            file->data[i] = data[i];
+        }
+        file->size = size;
+        file->data_capacity = size;
+    }
+
+    ramfs_add_child(ramfs_sb.root, file);
+    printk(KERN_INFO "RAMFS: Created file '%s' (%lu bytes)\n", path, (unsigned long)size);
+    return 0;
+}
+
 int ramfs_create_dir(const char *path, mode_t mode)
 {
     if (!ramfs_sb.root) {

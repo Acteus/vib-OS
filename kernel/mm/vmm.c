@@ -157,6 +157,8 @@ int vmm_init(void)
     /* Kernel PGD is a static array, already initialized */
     printk("VMM: Kernel PGD ready\n");
     
+    /* Set up memory attributes - architecture specific */
+#ifdef ARCH_ARM64
     /* Set up MAIR (Memory Attribute Indirection Register) */
     uint64_t mair = 
         (0xFFUL << 0) |     /* Index 0: Normal, Write-back */
@@ -180,8 +182,14 @@ int vmm_init(void)
         (5UL << 32);        /* IPS: 48-bit Output Address */
     
     asm volatile("msr tcr_el1, %0" : : "r" (tcr));
+#elif defined(ARCH_X86_64)
+    /* x86_64: Set up PAT (Page Attribute Table) if needed */
+    /* For now, use default PAT settings from bootloader */
+#elif defined(ARCH_X86)
+    /* x86 32-bit: Use default memory attributes */
+#endif
     
-    printk("VMM: TCR/MAIR configured\n");
+    printk("VMM: Memory attributes configured\n");
     
     /* Create identity mapping for first 1GB (covers kernel and devices) */
     /* Using 1GB block mappings at level 1 for efficiency */
@@ -215,27 +223,49 @@ int vmm_init(void)
     /* This is at L1 index 0, but we need L2 tables for finer control */
     /* For simplicity, use block mappings - device memory is in first 1GB */
     
+    /* Load page tables - architecture specific */
+#ifdef ARCH_ARM64
     /* Load TTBR0 (identity mapping for kernel boot) */
     asm volatile("msr ttbr0_el1, %0" : : "r" ((uint64_t)kernel_pgd));
     
     /* Load TTBR1 (will be used for high-half kernel later) */
     asm volatile("msr ttbr1_el1, %0" : : "r" ((uint64_t)kernel_pgd));
+#elif defined(ARCH_X86_64)
+    /* Load CR3 with page table address */
+    asm volatile("mov %0, %%cr3" :: "r"((uint64_t)kernel_pgd) : "memory");
+#elif defined(ARCH_X86)
+    /* Load CR3 with page directory address */
+    asm volatile("mov %0, %%cr3" :: "r"((uint32_t)kernel_pgd) : "memory");
+#endif
     
     /* Ensure all writes complete before enabling MMU */
+#ifdef ARCH_ARM64
     asm volatile("dsb sy");
     asm volatile("isb");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    asm volatile("" ::: "memory");  /* Compiler barrier */
+#endif
     
     printk("VMM: TTBRs configured, about to enable MMU...\n");
     
-    /* Enable MMU */
+    /* Enable MMU - architecture specific */
+#ifdef ARCH_ARM64
     uint64_t sctlr;
     asm volatile("mrs %0, sctlr_el1" : "=r" (sctlr));
     sctlr |= (1 << 0);   /* M: Enable MMU */
     sctlr |= (1 << 2);   /* C: Enable data cache */
     sctlr |= (1 << 12);  /* I: Enable instruction cache */
     asm volatile("msr sctlr_el1, %0" : : "r" (sctlr));
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    /* x86: MMU already enabled by bootloader, just reload CR3 */
+    /* CR3 was already loaded above */
+#endif
     
+#ifdef ARCH_ARM64
     asm volatile("isb");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    /* No ISB equivalent needed on x86 */
+#endif
     
     printk(KERN_INFO "VMM: MMU enabled! Page tables active.\n");
     
@@ -388,23 +418,42 @@ void vmm_switch_address_space(struct mm_struct *mm)
     }
     
     /* Load TTBR0 (user page tables) */
+#ifdef ARCH_ARM64
     asm volatile("msr ttbr0_el1, %0" : : "r" ((uint64_t)mm->pgd));
     asm volatile("isb");
+#elif defined(ARCH_X86_64)
+    asm volatile("mov %0, %%cr3" :: "r"((uint64_t)mm->pgd) : "memory");
+#elif defined(ARCH_X86)
+    asm volatile("mov %0, %%cr3" :: "r"((uint32_t)mm->pgd) : "memory");
+#endif
     vmm_flush_tlb();
 }
 
 void vmm_flush_tlb(void)
 {
+#ifdef ARCH_ARM64
     asm volatile(
         "dsb ishst\n"
         "tlbi vmalle1is\n"
         "dsb ish\n"
         "isb"
     );
+#elif defined(ARCH_X86_64)
+    /* Reload CR3 to flush TLB */
+    uint64_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    asm volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
+#elif defined(ARCH_X86)
+    /* Reload CR3 to flush TLB */
+    uint32_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    asm volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
+#endif
 }
 
 void vmm_flush_tlb_page(virt_addr_t vaddr)
 {
+#ifdef ARCH_ARM64
     asm volatile(
         "dsb ishst\n"
         "tlbi vale1is, %0\n"
@@ -412,4 +461,8 @@ void vmm_flush_tlb_page(virt_addr_t vaddr)
         "isb"
         : : "r" (vaddr >> 12)
     );
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    /* Invalidate single page */
+    asm volatile("invlpg (%0)" :: "r"(vaddr) : "memory");
+#endif
 }

@@ -9,6 +9,7 @@
 #define PROCESS_H
 
 #include "../include/types.h"
+#include "../include/arch/arch.h"
 
 #define PROCESS_NAME_MAX 32
 #define PROCESS_STACK_SIZE 0x100000  // 1MB per process (TLS crypto needs lots of stack)
@@ -23,19 +24,7 @@ typedef enum {
     PROC_STATE_ZOMBIE        // Exited, waiting to be cleaned up
 } proc_state_t;
 
-// Saved CPU context for preemptive context switching
-// Must save ALL registers since interrupt can happen at any instruction
-typedef struct {
-    // ALL general purpose registers (x0-x30)
-    uint64_t x[31];
-    uint64_t sp;         // Stack pointer
-    uint64_t pc;         // Program counter (elr_el1)
-    uint64_t pstate;     // Processor state (spsr_el1)
-    // FPU state
-    uint64_t fpcr;
-    uint64_t fpsr;
-    uint64_t fp_regs[64];  // q0-q31 (each 128-bit = 2 x 64-bit)
-} __attribute__((aligned(16))) cpu_context_t;
+// CPU context is now defined in arch/arch.h for multi-architecture support
 
 typedef struct process {
     int pid;

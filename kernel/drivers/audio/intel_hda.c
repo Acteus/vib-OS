@@ -18,6 +18,8 @@ static volatile uint32_t *hda_regs = 0;
 /* CORB/RIRB Buffers */
 static uint32_t *corb_buffer = 0;
 static uint64_t *rirb_buffer = 0;
+static uint8_t hda_stream_tag = 1;
+static uint32_t stream_base = 0;
 
 /* Reg Access Helpers */
 static uint32_t hda_read32(uint32_t offset) {
@@ -46,6 +48,68 @@ static uint8_t hda_read8(uint32_t offset) {
 static void hda_write8(uint32_t offset, uint8_t val) {
     volatile uint8_t *regs8 = (volatile uint8_t *)hda_regs;
     regs8[offset] = val;
+}
+
+static uint16_t hda_build_format(uint32_t sample_rate, uint8_t channels, uint8_t bits_per_sample)
+{
+    /* HDA SDnFMT:
+     * [14] base rate (1 = 44.1k, 0 = 48k)
+     * [13:11] multiplier (mult - 1)
+     * [10:8] divider (div - 1)
+     * [7:4] channels - 1
+     * [3:0] bits per sample code (0=8,1=16,2=20,3=24,4=32)
+     */
+    struct rate_map {
+        uint32_t rate;
+        uint8_t base_44;
+        uint8_t mult;
+        uint8_t div;
+    };
+    static const struct rate_map rates[] = {
+        { 8000,   0, 1, 6 },
+        { 11025,  1, 1, 4 },
+        { 16000,  0, 1, 3 },
+        { 22050,  1, 1, 2 },
+        { 32000,  0, 1, 2 },
+        { 44100,  1, 1, 1 },
+        { 48000,  0, 1, 1 },
+        { 88200,  1, 2, 1 },
+        { 96000,  0, 2, 1 },
+        { 176400, 1, 4, 1 },
+        { 192000, 0, 4, 1 }
+    };
+    uint8_t base_44 = 0;
+    uint8_t mult = 1;
+    uint8_t div = 1;
+    for (size_t i = 0; i < sizeof(rates) / sizeof(rates[0]); i++) {
+        if (rates[i].rate == sample_rate) {
+            base_44 = rates[i].base_44;
+            mult = rates[i].mult;
+            div = rates[i].div;
+            break;
+        }
+    }
+
+    uint8_t bits_code = 1; /* Default 16-bit */
+    switch (bits_per_sample) {
+        case 8:  bits_code = 0; break;
+        case 16: bits_code = 1; break;
+        case 20: bits_code = 2; break;
+        case 24: bits_code = 3; break;
+        case 32: bits_code = 4; break;
+        default: bits_code = 1; break;
+    }
+
+    if (channels == 0) channels = 1;
+    if (channels > 16) channels = 16;
+
+    uint16_t fmt = 0;
+    fmt |= (base_44 ? (1 << 14) : 0);
+    fmt |= ((uint16_t)(mult - 1) & 0x7) << 11;
+    fmt |= ((uint16_t)(div - 1) & 0x7) << 8;
+    fmt |= ((uint16_t)(channels - 1) & 0xF) << 4;
+    fmt |= (uint16_t)(bits_code & 0xF);
+    return fmt;
 }
 
 void intel_hda_init(pci_device_t *pci_dev) {
@@ -140,6 +204,7 @@ void intel_hda_init(pci_device_t *pci_dev) {
     /* Stride is 0x20 bytes */
     uint32_t output_stream_offset = 0x80 + (iss * 0x20);
     printk("HDA: Output Stream 0 offset: 0x%x\n", output_stream_offset);
+    stream_base = output_stream_offset;
     
     /* 4. Configure Codec (QEMU HDA-Duplex usually at Address 0) */
     /* We need to send verbs via CORB and check RIRB. 
@@ -253,10 +318,18 @@ void intel_hda_init(pci_device_t *pci_dev) {
         uint64_t cache_line_size = 64;
         start = start & ~(cache_line_size - 1);
         while (start < end) {
+#ifdef ARCH_ARM64
             asm volatile("dc civac, %0" :: "r" (start));
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+            asm volatile("clflush (%0)" :: "r"(start) : "memory");
+#endif
             start += cache_line_size;
         }
+#ifdef ARCH_ARM64
         asm volatile("dsb sy");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+        asm volatile("mfence" ::: "memory");
+#endif
     }
     
     hda_write16(HDA_CORBWP, wp);
@@ -264,7 +337,6 @@ void intel_hda_init(pci_device_t *pci_dev) {
     printk("HDA: Codec Configured (Node 2 Stream=1, Node 4 Out).\n");
     
     /* Test Tone: Square Wave (48kHz, 16-bit, Stereo) */
-    /* 1000 samples ~ 20ms. Beep. */
     uint32_t test_samples = 48000 / 2; /* 0.5 sec */
     int16_t *test_buf = (int16_t *)kmalloc(test_samples * 2 * 2);
     for(uint32_t i=0; i<test_samples; i++) {
@@ -280,14 +352,16 @@ void intel_hda_init(pci_device_t *pci_dev) {
 /* Global DMA Resources for Output Stream 0 */
 static uint8_t *dma_buffer = 0;
 static hda_bdl_entry_t *bdl = 0;
-static uint32_t stream_base = 0;
 
 int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uint32_t sample_rate) {
     if (!hda_regs) return -1;
     
     /* Calculate size in bytes (16-bit = 2 bytes) */
     uint32_t size = samples * channels * 2;
-    if (size > 64 * 1024) size = 64 * 1024; /* Cap at 64K for now */
+    if (size > 64 * 1024) {
+        size = 64 * 1024;
+        samples = size / (channels * 2);
+    }
     
     /* Allocate resources once with 128-byte alignment for BDL */
     if (!dma_buffer) {
@@ -299,11 +373,7 @@ int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uin
         void *raw_buf = kmalloc(64 * 1024 + 128);
         dma_buffer = (uint8_t *)(((uint64_t)raw_buf + 127) & ~127ULL);
         
-        /* Find Stream 0 Base (We found it was 0x100 for Output 0) */
-        /* Re-calculating to be safe or reusing logic */
-        /* Hardcoding offset 0x100 based on logs: "Output Stream 0 offset: 0x100" */
-        stream_base = 0x100;
-        
+        /* stream_base is set during intel_hda_init() */
         memset(dma_buffer, 0, 64 * 1024);
         memset(bdl, 0, 128 * sizeof(hda_bdl_entry_t));
     }
@@ -339,21 +409,25 @@ int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uin
     /* 3. Setup Buffer */
     memcpy(dma_buffer, data, size);
     
-    /* 3. Setup Buffer */
-    memcpy(dma_buffer, data, size);
-    
     /* Enable Global Interrupts (GIE) */
     hda_write32(HDA_INTCTL, 0x80000000 | 0x40000000);
 
-    /* Setup BDL with 2 entries */
-    uint32_t half_size = size / 2;
-    bdl[0].addr = (uint64_t)dma_buffer;
-    bdl[0].len = half_size;
-    bdl[0].flags = 0;
-    
-    bdl[1].addr = (uint64_t)(dma_buffer + half_size);
-    bdl[1].len = half_size;
-    bdl[1].flags = 0;
+    /* Setup BDL entries */
+    uint32_t bdl_entries = (size <= 4096) ? 1 : 2;
+    if (bdl_entries == 1) {
+        bdl[0].addr = (uint64_t)dma_buffer;
+        bdl[0].len = size;
+        bdl[0].flags = 1; /* IOC on last entry */
+    } else {
+        uint32_t half_size = size / 2;
+        bdl[0].addr = (uint64_t)dma_buffer;
+        bdl[0].len = half_size;
+        bdl[0].flags = 0;
+        
+        bdl[1].addr = (uint64_t)(dma_buffer + half_size);
+        bdl[1].len = size - half_size;
+        bdl[1].flags = 1; /* IOC on last entry */
+    }
 
     /* Flush Data */
     uint64_t start = (uint64_t)dma_buffer;
@@ -361,33 +435,49 @@ int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uin
     uint64_t cache_line_size = 64;
     start = start & ~(cache_line_size - 1);
     while (start < end) {
+#ifdef ARCH_ARM64
         asm volatile("dc civac, %0" :: "r" (start));
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+        asm volatile("clflush (%0)" :: "r"(start) : "memory");
+#endif
         start += cache_line_size;
     }
+#ifdef ARCH_ARM64
     asm volatile("dsb sy");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    asm volatile("mfence" ::: "memory");
+#endif
     
     /* Flush BDL */
     start = (uint64_t)bdl;
     end = start + 256;
     start = start & ~(cache_line_size - 1);
     while (start < end) {
+#ifdef ARCH_ARM64
         asm volatile("dc civac, %0" :: "r" (start));
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+        asm volatile("clflush (%0)" :: "r"(start) : "memory");
+#endif
         start += cache_line_size;
     }
+#ifdef ARCH_ARM64
     asm volatile("dsb sy");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    asm volatile("mfence" ::: "memory");
+#endif
     
     /* 5. Program Stream Registers */
     hda_write32(stream_base + HDA_SD_BDLPL, (uint32_t)(uint64_t)bdl);
     hda_write32(stream_base + HDA_SD_BDLPU, (uint32_t)((uint64_t)bdl >> 32));
     hda_write32(stream_base + HDA_SD_CBL, size);
-    hda_write16(stream_base + HDA_SD_LVI, 1);
+    hda_write16(stream_base + HDA_SD_LVI, (uint16_t)(bdl_entries - 1));
     
-    /* Set Format: 44.1kHz, 16-bit, Stereo */
-    uint16_t fmt = 0x4011;
+    /* Set Format: sample rate/channels */
+    uint16_t fmt = hda_build_format(sample_rate, channels, 16);
     hda_write16(stream_base + HDA_SD_FMT, fmt);
     
     /* Codec Format Setup */
-    hda_write32(HDA_ICOI, 0x00224011);
+    hda_write32(HDA_ICOI, 0x00220000 | fmt);
     hda_write16(HDA_ICIS, 0x1);
     for(int i=0; i<1000; i++) if(!(hda_read16(HDA_ICIS) & 1)) break;
 
@@ -396,7 +486,7 @@ int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uin
     hda_write8(stream_base + HDA_SD_STS, 0x1C);
 
     /* Enable RUN */
-    hda_write32(ctl_offset, HDA_SD_CTL_RUN | (1 << 20));
+    hda_write32(ctl_offset, HDA_SD_CTL_RUN | ((uint32_t)hda_stream_tag << 20));
     
     /* BLOCKING WAIT: Time Based */
     /* Approx 0.5s wait to ensure sound is heard */

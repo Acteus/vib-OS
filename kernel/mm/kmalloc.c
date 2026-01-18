@@ -52,7 +52,11 @@ static volatile int heap_lock = 0;
 static void lock_heap(void)
 {
     while (__atomic_test_and_set(&heap_lock, __ATOMIC_ACQUIRE)) {
+#ifdef ARCH_ARM64
         asm volatile("yield");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+        asm volatile("pause");
+#endif
     }
 }
 

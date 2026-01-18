@@ -251,7 +251,11 @@ void exit_task(int code)
     
     /* Should never reach here */
     while (1) {
+#ifdef ARCH_ARM64
         asm volatile("wfi");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+        asm volatile("hlt");
+#endif
     }
 }
 

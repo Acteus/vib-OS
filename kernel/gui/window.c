@@ -10,6 +10,7 @@
 #include "../core/process.h"  /* For Doom launch */
 #include "icons.h"            /* Icon bitmaps */
 #include "fs/vfs.h"        /* VFS headers */
+#include "media/media.h"
 
 struct window *gui_create_file_manager(int x, int y);
 void gui_open_notepad(const char *path);
@@ -634,6 +635,26 @@ static int str_cmp(const char *s1, const char *s2)
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }
 
+static char to_lower(char c)
+{
+    if (c >= 'A' && c <= 'Z') return (char)(c + 32);
+    return c;
+}
+
+static int str_ends_with_ci(const char *name, const char *ext)
+{
+    if (!name || !ext) return 0;
+    int nlen = 0;
+    int elen = 0;
+    while (name[nlen]) nlen++;
+    while (ext[elen]) elen++;
+    if (elen == 0 || nlen < elen) return 0;
+    for (int i = 0; i < elen; i++) {
+        if (to_lower(name[nlen - elen + i]) != to_lower(ext[i])) return 0;
+    }
+    return 1;
+}
+
 static void draw_icon(int x, int y, int size, const unsigned char *icon, uint32_t fg_color, uint32_t bg_color);
 
 
@@ -642,6 +663,13 @@ struct fm_state {
     char selected[256];
     int scroll_y;
 };
+
+struct image_viewer_state {
+    media_image_t image;
+};
+
+void gui_open_image_viewer(const char *path);
+static void gui_play_mp3_file(const char *path);
 
 /* Context for finding clicked item */
 struct find_ctx {
@@ -745,6 +773,10 @@ static int fm_render_callback(void *ctx, const char *name, int len, loff_t offse
         if (len > 4 && name[len-4] == '.' && name[len-3] == 't' && name[len-2] == 'x' && name[len-1] == 't') {
             bmp = icon_notepad;
             color = 0xFFFFFF;
+        } else if (str_ends_with_ci(name, ".jpg") || str_ends_with_ci(name, ".jpeg")) {
+            color = 0xF9E2AF;
+        } else if (str_ends_with_ci(name, ".mp3")) {
+            color = 0xA6E3A1;
         }
     }
     
@@ -923,35 +955,157 @@ static void fm_on_mouse(struct window *win, int x, int y, int buttons)
     if (fctx.clicked) {
         /* Check if it's a file (.txt) */
         int len = 0; while(st->selected[len]) len++;
-        
-        if (len > 4 && st->selected[len-4] == '.' && st->selected[len-3] == 't' && 
-            st->selected[len-2] == 'x' && st->selected[len-1] == 't') {
-            
-            /* Build full path */
-            char full_path[512];
-            int idx = 0;
-            int p_len = 0; while(st->path[p_len]) { full_path[idx++] = st->path[p_len++]; }
-            if (idx > 0 && full_path[idx-1] != '/') full_path[idx++] = '/';
-            else if (idx == 0) full_path[idx++] = '/'; 
-            
-            int s_len = 0; while(st->selected[s_len]) { full_path[idx++] = st->selected[s_len++]; }
-            full_path[idx] = '\0';
-            
-            /* Open in Notepad */
+
+        /* Build full path once */
+        char full_path[512];
+        int idx = 0;
+        int p_len = 0; while(st->path[p_len]) { full_path[idx++] = st->path[p_len++]; }
+        if (idx > 0 && full_path[idx-1] != '/') full_path[idx++] = '/';
+        else if (idx == 0) full_path[idx++] = '/';
+        int s_len = 0; while(st->selected[s_len]) { full_path[idx++] = st->selected[s_len++]; }
+        full_path[idx] = '\0';
+
+        if (str_ends_with_ci(st->selected, ".txt")) {
             gui_open_notepad(full_path);
+        } else if (str_ends_with_ci(st->selected, ".jpg") || str_ends_with_ci(st->selected, ".jpeg")) {
+            gui_open_image_viewer(full_path);
+        } else if (str_ends_with_ci(st->selected, ".mp3")) {
+            gui_play_mp3_file(full_path);
         } else {
-            /* Directory - Navigate */
-            int p_len = 0; while(st->path[p_len]) p_len++;
-            if (st->path[p_len-1] != '/') {
-                st->path[p_len++] = '/';
+            /* Directory - Navigate if it's a dir */
+            struct file *entry = vfs_open(full_path, O_RDONLY, 0);
+            if (entry && entry->f_dentry && entry->f_dentry->d_inode &&
+                S_ISDIR(entry->f_dentry->d_inode->i_mode)) {
+                int p = 0; while(st->path[p]) p++;
+                if (st->path[p-1] != '/') {
+                    st->path[p++] = '/';
+                }
+                int s = 0; while(st->selected[s]) {
+                    st->path[p++] = st->selected[s++];
+                }
+                st->path[p] = '\0';
+                st->selected[0] = '\0';
             }
-            int s_len = 0; while(st->selected[s_len]) {
-                st->path[p_len++] = st->selected[s_len++];
-            }
-            st->path[p_len] = '\0';
-            st->selected[0] = '\0';
+            if (entry) vfs_close(entry);
         }
     }
+}
+
+static void image_viewer_on_close(struct window *win)
+{
+    if (!win || !win->userdata) return;
+    struct image_viewer_state *st = (struct image_viewer_state *)win->userdata;
+    media_free_image(&st->image);
+    kfree(st);
+    win->userdata = NULL;
+}
+
+static void draw_image_viewer(struct window *win, int content_x, int content_y, int content_w, int content_h)
+{
+    if (!win || !win->userdata) return;
+    struct image_viewer_state *st = (struct image_viewer_state *)win->userdata;
+    if (!st->image.pixels || st->image.width == 0 || st->image.height == 0) return;
+
+    int img_w = (int)st->image.width;
+    int img_h = (int)st->image.height;
+    int draw_w = img_w;
+    int draw_h = img_h;
+
+    if (draw_w > content_w) {
+        draw_w = content_w;
+        draw_h = (img_h * draw_w) / img_w;
+    }
+    if (draw_h > content_h) {
+        draw_h = content_h;
+        draw_w = (img_w * draw_h) / img_h;
+    }
+    if (draw_w <= 0 || draw_h <= 0) return;
+
+    int offset_x = content_x + (content_w - draw_w) / 2;
+    int offset_y = content_y + (content_h - draw_h) / 2;
+
+    for (int y = 0; y < draw_h; y++) {
+        int src_y = (y * img_h) / draw_h;
+        for (int x = 0; x < draw_w; x++) {
+            int src_x = (x * img_w) / draw_w;
+            uint32_t color = st->image.pixels[src_y * img_w + src_x];
+            draw_pixel(offset_x + x, offset_y + y, color);
+        }
+    }
+}
+
+void gui_open_image_viewer(const char *path)
+{
+    if (!path) return;
+
+    uint8_t *data = NULL;
+    size_t size = 0;
+    if (media_load_file(path, &data, &size) != 0) {
+        printk("Image Viewer: Failed to read %s\n", path);
+        return;
+    }
+
+    struct image_viewer_state *st = kmalloc(sizeof(struct image_viewer_state), GFP_KERNEL);
+    if (!st) {
+        media_free_file(data);
+        return;
+    }
+    st->image.pixels = NULL;
+    st->image.width = 0;
+    st->image.height = 0;
+
+    if (media_decode_jpeg(data, size, &st->image) != 0) {
+        printk("Image Viewer: JPEG decode failed\n");
+        media_free_file(data);
+        kfree(st);
+        return;
+    }
+    media_free_file(data);
+
+    int win_w = st->image.width + 40;
+    int win_h = st->image.height + 60;
+    if (win_w < 320) win_w = 320;
+    if (win_h < 240) win_h = 240;
+    if (win_w > (int)primary_display.width - 40) win_w = primary_display.width - 40;
+    if (win_h > (int)primary_display.height - 40) win_h = primary_display.height - 40;
+
+    struct window *win = gui_create_window("Image Viewer", 120, 120, win_w, win_h);
+    if (win) {
+        win->userdata = st;
+        win->on_close = image_viewer_on_close;
+    } else {
+        media_free_image(&st->image);
+        kfree(st);
+    }
+}
+
+static void gui_play_mp3_file(const char *path)
+{
+    if (!path) return;
+
+    uint8_t *data = NULL;
+    size_t size = 0;
+    if (media_load_file(path, &data, &size) != 0) {
+        printk("Audio: Failed to read %s\n", path);
+        return;
+    }
+
+    media_audio_t audio;
+    audio.samples = NULL;
+    audio.sample_count = 0;
+    audio.sample_rate = 0;
+    audio.channels = 0;
+
+    if (media_decode_mp3(data, size, &audio) != 0) {
+        printk("Audio: MP3 decode failed\n");
+        media_free_file(data);
+        return;
+    }
+    media_free_file(data);
+
+    extern int intel_hda_play_pcm(const void *data, uint32_t samples, uint8_t channels, uint32_t sample_rate);
+    intel_hda_play_pcm(audio.samples, audio.sample_count, audio.channels, audio.sample_rate);
+    media_free_audio(&audio);
 }
 
 
@@ -1162,6 +1316,10 @@ static void draw_window(struct window *win)
         gui_draw_string(content_x + 20, content_y + 150, "- Latest News", 0x007AFF, 0xFFFFFF);
         gui_draw_string(content_x + 20, content_y + 170, "- Documentation", 0x007AFF, 0xFFFFFF);
         gui_draw_string(content_x + 20, content_y + 190, "- Source Code", 0x007AFF, 0xFFFFFF);
+    }
+    /* Image Viewer */
+    else if (win->title[0] == 'I' && win->title[1] == 'm' && win->title[2] == 'a') {
+        draw_image_viewer(win, content_x, content_y, content_w, content_h);
     }
     /* Help */
     else if (win->title[0] == 'H' && win->title[1] == 'e') {
@@ -1978,7 +2136,11 @@ void gui_compose(void)
         }
         
         /* Memory barrier to ensure writes are visible before next frame */
+#ifdef ARCH_ARM64
         asm volatile("dsb sy" ::: "memory");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+        asm volatile("mfence" ::: "memory");
+#endif
     }
 }
 

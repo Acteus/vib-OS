@@ -60,9 +60,10 @@ CFLAGS_COMMON := -Wall -Wextra -Wno-unused-function -ffreestanding -fno-stack-pr
                  -fno-pic -mcpu=cortex-a72 -O2 -g
 
 CFLAGS_KERNEL := $(CFLAGS_COMMON) $(CROSS_TARGET) \
-                 -I$(KERNEL_DIR)/include \
+                 -I$(KERNEL_DIR)/include -I$(KERNEL_DIR) \
                  -mgeneral-regs-only \
-                 -fno-builtin -nostdlib -nostdinc
+                 -fno-builtin -nostdlib -nostdinc \
+                 -DARCH_ARM64
 
 CFLAGS_USER := -Wall -Wextra -O2 -g \
                --target=aarch64-linux-musl \
@@ -77,7 +78,8 @@ QEMU_CPU := max
 QEMU_MEMORY := 4G
 QEMU_FLAGS := -M $(QEMU_MACHINE) -cpu $(QEMU_CPU) -m $(QEMU_MEMORY) \
               -nographic -serial mon:stdio \
-              -drive if=pflash,format=raw,file=$(IMAGE_DIR)/unixos.img
+              -drive if=none,id=hd0,format=raw,file=$(IMAGE_DIR)/unixos.img \
+              -device virtio-blk-device,drive=hd0
 
 # ============================================================================
 # Main Targets
@@ -137,7 +139,9 @@ $(IMAGE_DIR):
 # Kernel Build
 # ============================================================================
 
-KERNEL_SOURCES := $(shell find $(KERNEL_DIR) -name '*.c' -o -name '*.S' 2>/dev/null)
+KERNEL_SOURCES := $(shell find $(KERNEL_DIR) -name '*.c' -o -name '*.S' 2>/dev/null | grep -v '/x86_64/' | grep -v '/x86/')
+# Also include ARM64-specific assembly
+KERNEL_SOURCES += $(shell find $(KERNEL_DIR)/arch/arm64 -name '*.S' 2>/dev/null)
 KERNEL_OBJECTS := $(patsubst $(KERNEL_DIR)/%.c,$(BUILD_DIR)/kernel/%.o,$(filter %.c,$(KERNEL_SOURCES)))
 KERNEL_OBJECTS += $(patsubst $(KERNEL_DIR)/%.S,$(BUILD_DIR)/kernel/%.o,$(filter %.S,$(KERNEL_SOURCES)))
 
@@ -154,7 +158,12 @@ kernel: $(BUILD_DIR) $(ALL_KERNEL_OBJECTS) $(KERNEL_BINARY)
 $(BUILD_DIR)/kernel/%.o: $(KERNEL_DIR)/%.c
 	@mkdir -p $(dir $@)
 	@echo "[CC] $<"
-	@$(CC) $(CFLAGS_KERNEL) -c $< -o $@
+	@# Media files need FP support, compile without -mgeneral-regs-only
+	@if echo "$<" | grep -q "/media/"; then \
+		$(CC) $(CFLAGS_COMMON) $(CROSS_TARGET) -mcpu=cortex-a72 -I$(KERNEL_DIR)/include -fno-builtin -nostdlib -nostdinc -c $< -o $@; \
+	else \
+		$(CC) $(CFLAGS_KERNEL) -c $< -o $@; \
+	fi
 
 $(BUILD_DIR)/kernel/%.o: $(KERNEL_DIR)/%.S
 	@mkdir -p $(dir $@)
@@ -234,13 +243,32 @@ image: $(IMAGE_DIR) kernel drivers
 # QEMU Testing
 # ============================================================================
 
-qemu: image
-	@echo "[QEMU] Starting UnixOS in emulator..."
-	@$(QEMU) $(QEMU_FLAGS)
+qemu: kernel
+	@echo "[QEMU] Starting UnixOS in emulator (direct kernel boot)..."
+	@$(QEMU) -M virt,gic-version=3 -cpu max -m 4G \
+		-nographic \
+		-kernel $(BUILD_DIR)/kernel/unixos.elf
 
-qemu-debug: image
+qemu-uefi: image
+	@echo "[QEMU] Starting UnixOS with UEFI boot..."
+	@echo "[QEMU] Note: Requires UEFI firmware (AAVMF)"
+	@if [ ! -f /usr/share/qemu-efi-aarch64/QEMU_EFI.fd ]; then \
+		echo "[ERROR] UEFI firmware not found. Install qemu-efi-aarch64 package."; \
+		echo "[INFO] Using direct kernel boot instead. Run 'make qemu'"; \
+		exit 1; \
+	fi
+	@$(QEMU) -M virt,gic-version=3 -cpu max -m 4G \
+		-nographic \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+		-drive if=none,id=hd0,format=raw,file=$(IMAGE_DIR)/unixos.img \
+		-device virtio-blk-device,drive=hd0
+
+qemu-debug: kernel
 	@echo "[QEMU] Starting UnixOS with GDB server on port 1234..."
-	@$(QEMU) $(QEMU_FLAGS) -s -S
+	@$(QEMU) -M virt,gic-version=3 -cpu max -m 4G \
+		-nographic \
+		-kernel $(BUILD_DIR)/kernel/unixos.elf \
+		-s -S
 
 # ============================================================================
 # Testing

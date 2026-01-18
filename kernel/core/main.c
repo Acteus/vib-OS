@@ -7,11 +7,11 @@
 
 #include "types.h"
 #include "printk.h"
+#include "media/seed_assets.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "sched/sched.h"
-#include "arch/arm64/gic.h"
-#include "arch/arm64/timer.h"
+#include "arch/arch.h"
 #include "drivers/uart.h"
 #include "fs/vfs.h"
 
@@ -109,12 +109,12 @@ static void init_subsystems(void *dtb)
     (void)dtb;  /* TODO: dtb_parse(dtb); */
     
     /* Initialize interrupt controller */
-    printk(KERN_INFO "  Initializing GIC (interrupt controller)...\n");
-    gic_init();
+    printk(KERN_INFO "  Initializing interrupt controller...\n");
+    arch_irq_init();
     
     /* Initialize system timer */
     printk(KERN_INFO "  Initializing timer...\n");
-    timer_init();
+    arch_timer_init();
     
     /* ================================================================= */
     /* Phase 2: Memory Management */
@@ -183,6 +183,7 @@ static void init_subsystems(void *dtb)
     /* Populate filesystem with sample data */
     extern int ramfs_create_dir(const char *path, mode_t mode);
     extern int ramfs_create_file(const char *path, mode_t mode, const char *content);
+    extern int ramfs_create_file_bytes(const char *path, mode_t mode, const uint8_t *data, size_t size);
     
     ramfs_create_dir("Documents", 0755);
     ramfs_create_dir("Downloads", 0755);
@@ -190,6 +191,8 @@ static void init_subsystems(void *dtb)
     ramfs_create_dir("System", 0755);
     ramfs_create_file("readme.txt", 0644, "Welcome to Vib-OS!\nThis is a real file in RamFS.");
     ramfs_create_file("todo.txt", 0644, "- Implement Browser\n- Fix Bugs\n- Sleep");
+    ramfs_create_file_bytes("sample.mp3", 0644, vib_seed_mp3, vib_seed_mp3_len);
+    ramfs_create_file_bytes("sample.jpg", 0644, vib_seed_jpg, vib_seed_jpg_len);
     
     /* Mount proc, sys, dev (placeholders) */
     printk(KERN_INFO "  Mounting procfs...\n");
@@ -254,7 +257,7 @@ static void init_subsystems(void *dtb)
     
     printk(KERN_INFO "[INIT] Enabling interrupts...\n");
     /* Enable interrupts */
-    asm volatile("msr daifclr, #2");  /* Clear IRQ mask */
+    arch_irq_enable();
     
     printk(KERN_INFO "[INIT] Kernel initialization complete!\n\n");
 }
@@ -312,8 +315,7 @@ static void start_init_process(void)
     int cursor_only = 0;   /* Only cursor needs updating */
     
     /* Timer for periodic auto-refresh (200ms = 5 FPS, flicker-free) */
-    extern uint64_t timer_get_ms(void);
-    uint64_t last_refresh = timer_get_ms();
+    uint64_t last_refresh = arch_timer_get_ms();
     const uint64_t REFRESH_MS = 200;  /* 5 FPS - smooth, no flicker */
     
     while (1) {
@@ -359,7 +361,7 @@ static void start_init_process(void)
         }
         
         /* Periodic refresh for animations (5 FPS) */
-        uint64_t now = timer_get_ms();
+        uint64_t now = arch_timer_get_ms();
         if (now - last_refresh >= REFRESH_MS) {
             last_refresh = now;
             needs_redraw = 1;
@@ -391,7 +393,7 @@ static void start_init_process(void)
 void panic(const char *msg)
 {
     /* Disable interrupts */
-    asm volatile("msr daifset, #0xf");
+    arch_irq_disable();
     
     printk(KERN_EMERG "\n");
     printk(KERN_EMERG "============================================\n");
@@ -402,7 +404,5 @@ void panic(const char *msg)
     printk(KERN_EMERG "System halted.\n");
     
     /* Infinite loop */
-    while (1) {
-        asm volatile("wfi");
-    }
+    arch_halt();
 }

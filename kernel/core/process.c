@@ -11,6 +11,7 @@
 #include "../include/fs/vfs_compat.h"
 #include "../include/mm/kmalloc.h"
 #include "../include/printk.h"
+#include "../include/arch/arch.h"
 
 /* Forward declare strncpy and strlen from our kernel */
 extern char *strncpy(char *dst, const char *src, size_t n);
@@ -240,13 +241,27 @@ int process_create(const char *path, int argc, char **argv) {
     // Set up initial context for preemptive scheduling
     // pc = entry wrapper, parameters in callee-saved registers x19-x22
     memset(&proc->context, 0, sizeof(cpu_context_t));
-    proc->context.sp = stack_top;
-    proc->context.pc = (uint64_t)process_entry_wrapper;  // Start here
-    proc->context.pstate = 0x3c5;  // EL1h, DAIF masked (IRQs disabled initially)
+    arch_context_set_sp(&proc->context, stack_top);
+    arch_context_set_pc(&proc->context, (uint64_t)process_entry_wrapper);  // Start here
+    
+#ifdef ARCH_ARM64
+    arch_context_set_flags(&proc->context, 0x3c5);  // EL1h, DAIF masked (IRQs disabled initially)
+    // Pass arguments via callee-saved registers
     proc->context.x[19] = proc->entry;        // x19 = entry point
-    proc->context.x[20] = (uint64_t)kapi_get();  // x20 = kapi pointer (from launcher.c)
+    proc->context.x[20] = (uint64_t)kapi_get();  // x20 = kapi pointer
     proc->context.x[21] = (uint64_t)argc;     // x21 = argc
     proc->context.x[22] = (uint64_t)argv;     // x22 = argv
+#elif defined(ARCH_X86_64)
+    arch_context_set_flags(&proc->context, 0x202);  // IF (interrupts enabled)
+    // Pass arguments via callee-saved registers (similar to ARM64)
+    proc->context.r12 = proc->entry;          // r12 = entry point
+    proc->context.r13 = (uint64_t)kapi_get(); // r13 = kapi pointer
+    proc->context.r14 = (uint64_t)argc;       // r14 = argc
+    proc->context.r15 = (uint64_t)argv;       // r15 = argv
+#elif defined(ARCH_X86)
+    arch_context_set_flags(&proc->context, 0x202);  // IF (interrupts enabled)
+    // x86 32-bit: pass via stack or registers (TBD)
+#endif
 
     // printf("[PROC] Created process '%s' pid=%d at 0x%lx-0x%lx (slot %d)\n",
     //        proc->name, proc->pid, proc->load_base, proc->load_base + proc->load_size, slot);
@@ -257,30 +272,43 @@ int process_create(const char *path, int argc, char **argv) {
 }
 
 // Entry wrapper - called when a new process is switched to for the first time
+// Architecture-specific implementation
+#ifdef ARCH_ARM64
 // Parameters passed in callee-saved registers x19-x22 (preserved across context switch)
 // x19 = entry, x20 = kapi, x21 = argc, x22 = argv
-//
-// MUST be naked to prevent GCC prologue from clobbering x19-x22!
 static void __attribute__((naked)) process_entry_wrapper(void) {
     asm volatile(
-        // Enable interrupts now that we're in user code
-        "msr daifclr, #2\n"
-
-        // Set up call: main(kapi, argc, argv)
-        // x19=entry, x20=kapi, x21=argc, x22=argv
         "mov x0, x20\n"         // x0 = kapi
         "mov x1, x21\n"         // x1 = argc
         "mov x2, x22\n"         // x2 = argv
         "blr x19\n"             // Call entry(kapi, argc, argv)
-
-        // Program returned, x0 = exit status
-        "bl process_exit\n"
-
-        // Should never return
-        "1: b 1b\n"
+        "bl process_exit\n"     // Exit with return value
+        "1: b 1b\n"             // Should never reach here
         ::: "memory"
     );
 }
+#elif defined(ARCH_X86_64)
+// Parameters passed in callee-saved registers r12-r15
+// r12 = entry, r13 = kapi, r14 = argc, r15 = argv
+static void __attribute__((naked)) process_entry_wrapper(void) {
+    asm volatile(
+        "movq %%r13, %%rdi\n"   // rdi = kapi (1st arg)
+        "movq %%r14, %%rsi\n"   // rsi = argc (2nd arg)
+        "movq %%r15, %%rdx\n"   // rdx = argv (3rd arg)
+        "callq *%%r12\n"        // Call entry(kapi, argc, argv)
+        "movq %%rax, %%rdi\n"   // rdi = exit status
+        "callq process_exit\n"  // Exit
+        "1: jmp 1b\n"           // Should never reach here
+        ::: "memory"
+    );
+}
+#elif defined(ARCH_X86)
+// x86 32-bit implementation (TBD)
+static void process_entry_wrapper(void) {
+    // TODO: Implement for x86
+    process_exit(0);
+}
+#endif
 
 // Start a process (make it runnable)
 int process_start(int pid) {
@@ -299,11 +327,11 @@ int process_start(int pid) {
 // Exit current process
 void process_exit(int status) {
     // Disable IRQs during exit to prevent race with preemption
-    asm volatile("msr daifset, #2" ::: "memory");
+    arch_irq_disable();
 
     if (current_pid < 0) {
         printf("[PROC] Exit called with no current process!\n");
-        asm volatile("msr daifclr, #2" ::: "memory");
+        arch_irq_enable();
         return;
     }
 
@@ -330,12 +358,13 @@ void process_exit(int status) {
     current_process = NULL;
 
     // Debug: verify kernel_context before switching
-    printf("[PROC] Switching to kernel_context: pc=0x%lx sp=0x%lx pstate=0x%lx\n",
-           kernel_context.pc, kernel_context.sp, kernel_context.pstate);
+    printf("[PROC] Switching to kernel_context: pc=0x%llx sp=0x%llx\n",
+           (unsigned long long)arch_context_get_pc(&kernel_context), 
+           (unsigned long long)arch_context_get_sp(&kernel_context));
 
     // Sanity check kernel_context
     // Note: kernel code is in flash at 0x0, stack is near 0x5f000000
-    if (kernel_context.pc == 0 || kernel_context.sp == 0) {
+    if (arch_context_get_pc(&kernel_context) == 0 || arch_context_get_sp(&kernel_context) == 0) {
         printf("[PROC] ERROR: kernel_context appears corrupted!\n");
         printf("[PROC] This indicates memory corruption during process execution\n");
         while(1);  // Hang instead of crashing
@@ -345,7 +374,7 @@ void process_exit(int status) {
     // This will resume in process_exec_args() or process_schedule()
     // wherever the kernel was waiting
     // IRQs will be re-enabled when kernel re-enables them
-    process_context_switch(&proc->context, &kernel_context);
+    switch_context(&proc->context, &kernel_context);
 
     // Should never reach here
     printf("[PROC] ERROR: process_exit returned!\n");
@@ -367,7 +396,7 @@ void process_yield(void) {
 // Simple round-robin scheduler (for voluntary transitions like process_exec)
 void process_schedule(void) {
     // Disable IRQs during scheduling to prevent race with preemption
-    asm volatile("msr daifset, #2" ::: "memory");
+    arch_irq_disable();
 
     int old_pid = current_pid;
     process_t *old_proc = (old_pid >= 0) ? &proc_table[old_pid] : NULL;
@@ -388,33 +417,33 @@ void process_schedule(void) {
         // No runnable processes
         if (old_pid >= 0 && old_proc->state == PROC_STATE_RUNNING) {
             // Current process still running, keep it
-            asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
+            arch_irq_enable();
             return;
         }
         // Return to kernel (if we were in a process, switch back to kernel)
         if (old_pid >= 0) {
             current_pid = -1;
             current_process = NULL;
-            process_context_switch(&old_proc->context, &kernel_context);
+            switch_context(&old_proc->context, &kernel_context);
             // When we return here, IRQs will be re-enabled below
         }
         // Already in kernel with nothing to run - sleep until next interrupt
-        asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
-        asm volatile("wfi");
+        arch_irq_enable();
+        arch_idle();
         return;
     }
 
     if (next == old_pid && old_proc && old_proc->state == PROC_STATE_RUNNING) {
         // Same process and it's running - nothing to switch
-        asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
+        arch_irq_enable();
         return;
     }
 
     if (next == old_pid && old_proc && old_proc->state == PROC_STATE_READY) {
         // Process yielded but it's the only one - sleep until interrupt
         old_proc->state = PROC_STATE_RUNNING;
-        asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
-        asm volatile("wfi");
+        arch_irq_enable();
+        arch_idle();
         return;
     }
 
@@ -437,18 +466,20 @@ void process_schedule(void) {
     // Debug: if switching from kernel, verify kernel_context after we return
     int was_kernel = (old_pid < 0);
 
-    process_context_switch(old_ctx, &new_proc->context);
+    switch_context(old_ctx, &new_proc->context);
 
     // We return here when someone switches back to us
     // Verify kernel_context wasn't corrupted during process execution
     if (was_kernel) {
-        if (kernel_context.pc < 0x40000000 || kernel_context.sp < 0x40000000) {
+        if (arch_context_get_pc(&kernel_context) < 0x40000000 || arch_context_get_sp(&kernel_context) < 0x40000000) {
             printf("[PROC] WARNING: kernel_context corrupted after process ran!\n");
-            printf("[PROC] pc=0x%lx sp=0x%lx\n", kernel_context.pc, kernel_context.sp);
+            printf("[PROC] pc=0x%llx sp=0x%llx\n", 
+                   (unsigned long long)arch_context_get_pc(&kernel_context), 
+                   (unsigned long long)arch_context_get_sp(&kernel_context));
         }
     }
 
-    asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
+    arch_irq_enable();  // Re-enable IRQs
 }
 
 // Execute and wait - creates a real process and waits for it to finish
@@ -519,7 +550,7 @@ void process_schedule_from_irq(void) {
             if (idx != old_slot) {
                 // Safety check: verify process has valid context
                 process_t *new_proc = &proc_table[idx];
-                if (new_proc->context.sp == 0 || new_proc->context.pc == 0) {
+                if (arch_context_get_sp(&new_proc->context) == 0 || arch_context_get_pc(&new_proc->context) == 0) {
                     continue;  // Skip invalid process
                 }
 
@@ -534,7 +565,7 @@ void process_schedule_from_irq(void) {
                 current_process = new_proc;
 
                 // Memory barrier to ensure current_process is visible to IRQ handler
-                asm volatile("dsb sy" ::: "memory");
+                arch_dsb();
             }
             return;
         }
