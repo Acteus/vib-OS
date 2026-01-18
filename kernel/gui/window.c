@@ -1765,18 +1765,12 @@ static void draw_dock(void)
         int size = DOCK_ICON_SIZE;
         
         /* Check hover */
-        /* Simple check against the horizontal slot */
-        int slot_w = DOCK_ICON_SIZE + DOCK_PADDING;
-        int is_hovered = 0;
-        
         if (mouse_y >= dock_y && mouse_y < dock_y + dock_h &&
             mouse_x >= icon_x && mouse_x < icon_x + DOCK_ICON_SIZE) {
-            is_hovered = 1;
             hovered_idx = i;
             size = DOCK_ICON_SIZE + 16; /* Scale up */
         }
         
-        int draw_size = size;
         int draw_x = icon_x - (size - DOCK_ICON_SIZE) / 2;
         int draw_y = center_y - size / 2;
         
@@ -2164,8 +2158,6 @@ static int prev_buttons = 0;
 
 void gui_handle_mouse_event(int x, int y, int buttons)
 {
-    int prev_x = mouse_x;
-    int prev_y = mouse_y;
     mouse_x = x;
     mouse_y = y;
     
@@ -2373,11 +2365,12 @@ void gui_handle_mouse_event(int x, int y, int buttons)
                     case 2: /* Calculator */
                         gui_create_window("Calculator", spawn_x + 60, spawn_y + 40, 200, 280);
                         break;
-                    case 3: /* Notepad */
+                    case 3: /* Notepad */ {
                         /* Call open with NULL to just open blank */
                         extern void gui_open_notepad(const char *path);
                         gui_open_notepad(NULL);
                         break;
+                    }
                     case 4: /* Settings */
                         gui_create_window("Settings", spawn_x + 20, spawn_y + 30, 380, 320);
                         break;
@@ -2497,30 +2490,41 @@ struct window *gui_create_file_manager(int x, int y)
 
 static void notepad_on_mouse(struct window *win, int x, int y, int buttons)
 {
+    (void)win;
+    (void)buttons;  /* Already filtered for clicks by gui_handle_mouse_event */
+    
     /* Check Save Button */
     /* Toolbar area */
     int content_y = BORDER_WIDTH + TITLEBAR_HEIGHT;
     if (y >= content_y && y < content_y + 30) {
         if (x >= BORDER_WIDTH + 10 && x < BORDER_WIDTH + 70) {
             /* Save clicked */
+            printk("Notepad: Save button clicked\n");
+            
             if (notepad_filepath[0]) {
-                /* Open for writing */
-                struct file *f = vfs_open(notepad_filepath, O_RDWR | O_CREAT, 0644);
+                /* Open for writing - use O_TRUNC to clear file first */
+                struct file *f = vfs_open(notepad_filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 if (f) {
-                    /* Determine length */
-                    int len = 0; while(notepad_text[len] && len < NOTEPAD_MAX_TEXT) len++;
+                    /* Determine text length */
+                    int len = 0;
+                    while (notepad_text[len] && len < NOTEPAD_MAX_TEXT) len++;
                     
                     /* Write content */
                     extern ssize_t vfs_write(struct file *file, const char *buf, size_t count);
-                    vfs_write(f, notepad_text, len);
-                    /* Reset file position if we want to ensure we wrote from start? vfs_open sets pos 0. */
-                    
-                    /* Hack: Force truncation in ramfs? For now just overwrite. */
+                    ssize_t written = vfs_write(f, notepad_text, len);
                     
                     vfs_close(f);
                     
-                    printk("Notepad: Saved %d bytes to %s\n", len, notepad_filepath);
+                    if (written >= 0) {
+                        printk("Notepad: Saved %d bytes to %s\n", (int)written, notepad_filepath);
+                    } else {
+                        printk("Notepad: Write failed for %s\n", notepad_filepath);
+                    }
+                } else {
+                    printk("Notepad: Could not open %s for writing\n", notepad_filepath);
                 }
+            } else {
+                printk("Notepad: No file path set\n");
             }
         }
     }
@@ -2561,6 +2565,8 @@ void gui_open_notepad(const char *path)
 
 static void rename_on_mouse(struct window *win, int x, int y, int buttons)
 {
+    (void)buttons;  /* Already filtered for clicks by gui_handle_mouse_event */
+    
     /* Check Save Button */
     int content_y = BORDER_WIDTH + TITLEBAR_HEIGHT;
     if (y >= content_y && y < content_y + 30) {

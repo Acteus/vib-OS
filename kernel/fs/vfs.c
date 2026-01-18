@@ -320,6 +320,13 @@ struct file *vfs_open(const char *path, int flags, mode_t mode)
         f->f_op->open(child->d_inode, f);
     }
     
+    /* Handle O_TRUNC - reset file position and size to 0 */
+    if (flags & O_TRUNC) {
+        f->f_pos = 0;
+        child->d_inode->i_size = 0;
+        /* Truncate operation will be handled by filesystem on write */
+    }
+    
     return f;
 }
 
