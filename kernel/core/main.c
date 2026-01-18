@@ -286,10 +286,6 @@ static void init_subsystems(void *dtb)
  * start_init_process - Start the first userspace process (PID 1)
  */
 
-/* Global terminal pointer for keyboard callback */
-static void *g_active_terminal = 0;
-
-/* Keyboard callback wrapper */
 /* Keyboard callback wrapper */
 static void keyboard_handler(int key)
 {
