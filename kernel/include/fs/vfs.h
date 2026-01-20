@@ -121,6 +121,7 @@
 #define EMLINK          31
 #define EPIPE           32
 #define ENOSYS          38
+#define ENOTEMPTY       39
 
 /* ===================================================================== */
 /* Forward declarations */
@@ -310,6 +311,15 @@ ssize_t vfs_read(struct file *file, char *buf, size_t count);
 
 /**
  * vfs_write - Write to a file
+ */
+ssize_t vfs_write(struct file *file, const char *buf, size_t count);
+
+/**
+ * vfs_lseek - Seek in a file
+ */
+loff_t vfs_lseek(struct file *file, loff_t offset, int whence);
+
+/* Additional declarations - Write to a file
  */
 ssize_t vfs_write(struct file *file, const char *buf, size_t count);
 

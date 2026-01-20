@@ -11,7 +11,7 @@
  *   0x108: pstate
  */
 
-.global process_context_switch
+.global switch_context
 .type process_context_switch, %function
 
 /*
@@ -21,7 +21,7 @@
  * new_ctx: x1 - context to restore
  */
 
-process_context_switch:
+switch_context:
     // Save current context to old_ctx (x0)
     cbz     x0, .Lrestore
 

@@ -410,12 +410,67 @@ static int ramfs_rename(struct inode *old_dir, struct dentry *old_dentry,
     return 0;
 }
 
+static int ramfs_unlink(struct inode *dir, struct dentry *dentry)
+{
+    struct ramfs_inode *ram_dir = (struct ramfs_inode *)dir->i_private;
+    struct ramfs_inode *target = ramfs_lookup_child(ram_dir, dentry->d_name);
+    
+    if (!target) return -ENOENT;
+    
+    /* Must be a file, not a directory */
+    if (S_ISDIR(target->mode)) return -EISDIR;
+    
+    /* Remove from parent's child list */
+    struct ramfs_inode **prev = &ram_dir->children;
+    while (*prev) {
+        if (*prev == target) {
+            *prev = target->sibling;
+            break;
+        }
+        prev = &((*prev)->sibling);
+    }
+    
+    /* Free the inode and its data */
+    ramfs_free_inode(target);
+    
+    return 0;
+}
+
+static int ramfs_rmdir(struct inode *dir, struct dentry *dentry)
+{
+    struct ramfs_inode *ram_dir = (struct ramfs_inode *)dir->i_private;
+    struct ramfs_inode *target = ramfs_lookup_child(ram_dir, dentry->d_name);
+    
+    if (!target) return -ENOENT;
+    
+    /* Must be a directory */
+    if (!S_ISDIR(target->mode)) return -ENOTDIR;
+    
+    /* Directory must be empty */
+    if (target->children) return -ENOTEMPTY;
+    
+    /* Remove from parent's child list */
+    struct ramfs_inode **prev = &ram_dir->children;
+    while (*prev) {
+        if (*prev == target) {
+            *prev = target->sibling;
+            break;
+        }
+        prev = &((*prev)->sibling);
+    }
+    
+    /* Free the inode */
+    ramfs_free_inode(target);
+    
+    return 0;
+}
+
 static struct inode_operations ramfs_inode_ops = {
     .lookup = ramfs_lookup,
     .create = ramfs_create,
     .mkdir = ramfs_mkdir,
-    .rmdir = NULL,
-    .unlink = NULL,
+    .rmdir = ramfs_rmdir,
+    .unlink = ramfs_unlink,
     .rename = ramfs_rename,
 };
 
@@ -508,14 +563,32 @@ int ramfs_init(void)
 /* Helper: Create a file in ramfs */
 /* ===================================================================== */
 
+/* Forward declaration */
+static struct ramfs_inode *ramfs_get_parent_dir(const char *path, char *filename);
+
 int ramfs_create_file(const char *path, mode_t mode, const char *content)
 {
     if (!ramfs_sb.root) {
         return -ENOENT;
     }
     
-    /* For now, just create in root */
-    struct ramfs_inode *file = ramfs_alloc_inode(S_IFREG | mode, path);
+    /* Parse path to find parent directory and filename */
+    char filename[RAMFS_MAX_NAME + 1];
+    struct ramfs_inode *parent = ramfs_get_parent_dir(path, filename);
+    if (!parent) {
+        /* Try root if no parent found */
+        parent = ramfs_sb.root;
+        int i = 0;
+        const char *start = path;
+        if (*start == '/') start++;
+        while (start[i] && i < RAMFS_MAX_NAME) {
+            filename[i] = start[i];
+            i++;
+        }
+        filename[i] = '\0';
+    }
+    
+    struct ramfs_inode *file = ramfs_alloc_inode(S_IFREG | mode, filename);
     if (!file) {
         return -ENOMEM;
     }
@@ -535,10 +608,94 @@ int ramfs_create_file(const char *path, mode_t mode, const char *content)
         }
     }
     
-    ramfs_add_child(ramfs_sb.root, file);
+    ramfs_add_child(parent, file);
     
     printk(KERN_INFO "RAMFS: Created file '%s'\n", path);
     
+    return 0;
+}
+
+/* Helper to find or create parent directory from path */
+static struct ramfs_inode *ramfs_get_parent_dir(const char *path, char *filename)
+{
+    /* Skip leading slash */
+    if (*path == '/') path++;
+    
+    /* Find last '/' in path */
+    const char *last_slash = NULL;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/') last_slash = p;
+    }
+    
+    if (!last_slash) {
+        /* No directory component, just filename - use root */
+        int i = 0;
+        while (path[i] && i < RAMFS_MAX_NAME) {
+            filename[i] = path[i];
+            i++;
+        }
+        filename[i] = '\0';
+        return ramfs_sb.root;
+    }
+    
+    /* Extract directory name (first component) */
+    char dirname[RAMFS_MAX_NAME + 1];
+    int len = last_slash - path;
+    if (len > RAMFS_MAX_NAME) len = RAMFS_MAX_NAME;
+    for (int i = 0; i < len; i++) {
+        dirname[i] = path[i];
+    }
+    dirname[len] = '\0';
+    
+    /* Extract filename */
+    int i = 0;
+    const char *fname = last_slash + 1;
+    while (fname[i] && i < RAMFS_MAX_NAME) {
+        filename[i] = fname[i];
+        i++;
+    }
+    filename[i] = '\0';
+    
+    /* Find directory (looking for just first component for now) */
+    struct ramfs_inode *dir = ramfs_lookup_child(ramfs_sb.root, dirname);
+    if (!dir) {
+        return NULL;
+    }
+    
+    return dir;
+}
+
+int ramfs_create_file_bytes(const char *path, mode_t mode, const uint8_t *data, size_t size)
+{
+    if (!ramfs_sb.root) {
+        return -ENOENT;
+    }
+
+    char filename[RAMFS_MAX_NAME + 1];
+    struct ramfs_inode *parent = ramfs_get_parent_dir(path, filename);
+    if (!parent) {
+        return -ENOENT;
+    }
+
+    struct ramfs_inode *file = ramfs_alloc_inode(S_IFREG | mode, filename);
+    if (!file) {
+        return -ENOMEM;
+    }
+
+    if (data && size > 0) {
+        file->data = kmalloc(size, GFP_KERNEL);
+        if (!file->data) {
+            return -ENOMEM;
+        }
+        for (size_t i = 0; i < size; i++) {
+            file->data[i] = data[i];
+        }
+        file->size = size;
+        file->data_capacity = size;
+    }
+
+    ramfs_add_child(parent, file);
+    printk(KERN_INFO "RAMFS: Created file '%s' (%lu bytes)\n", path, (unsigned long)size);
     return 0;
 }
 

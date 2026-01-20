@@ -115,7 +115,11 @@ static inline void agx_sgpu_write(uint32_t offset, uint32_t val)
     if (!agx_dev.sgpu_regs) return;
     agx_dev.sgpu_regs[offset / 4] = val;
     /* Memory barrier */
+#ifdef ARCH_ARM64
     asm volatile("dsb sy" ::: "memory");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    asm volatile("mfence" ::: "memory");
+#endif
 }
 
 static inline uint32_t agx_asc_read(uint32_t offset)

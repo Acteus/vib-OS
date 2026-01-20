@@ -139,18 +139,22 @@ static int kapi_sound_resume(void) { return 0; }
 static int kapi_sound_is_paused(void) { return 0; }
 
 static unsigned long kapi_get_uptime_ticks(void) {
-    /* Read ARM Generic Timer counter directly (CNTVCT_EL0)
-     * This works even when interrupts are blocked/not firing */
-    uint64_t cnt;
+    /* Read timer counter - architecture specific */
+#ifdef ARCH_ARM64
+    uint64_t cnt, freq;
     asm volatile("mrs %0, cntvct_el0" : "=r"(cnt));
-    
-    /* Also read the timer frequency to convert to 10ms ticks (100Hz) */
-    uint64_t freq;
     asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
-    
-    /* Convert counter to 10ms ticks (100Hz) */
-    /* ticks = counter / (frequency / 100) = counter * 100 / frequency */
     return (unsigned long)((cnt * 100ULL) / freq);
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    /* Use arch timer abstraction */
+    extern uint64_t arch_timer_get_ticks(void);
+    extern uint64_t arch_timer_get_frequency(void);
+    uint64_t cnt = arch_timer_get_ticks();
+    uint64_t freq = arch_timer_get_frequency();
+    return (unsigned long)((cnt * 100ULL) / freq);
+#else
+    return 0;
+#endif
 }
 
 static void kapi_sleep_ms(uint32_t ms) {
@@ -299,7 +303,13 @@ static void stub_win_title(int w, const char *t) { (void)w; (void)t; }
 static size_t stub_mem_info(void) { return 0; }
 static uint32_t stub_timestamp(void) { return 0; }
 static void stub_datetime(int *y, int *m, int *d, int *h, int *mi, int *s, int *w) { (void)y; (void)m; (void)d; (void)h; (void)mi; (void)s; (void)w; }
-static void stub_wfi(void) { asm volatile("wfi"); }
+static void stub_wfi(void) { 
+#ifdef ARCH_ARM64
+    asm volatile("wfi");
+#elif defined(ARCH_X86_64) || defined(ARCH_X86)
+    asm volatile("hlt");
+#endif
+}
 static int stub_sound(const void *d, uint32_t s) { (void)d; (void)s; return -1; }
 static int stub_sound_pcm(const void *d, uint32_t s, uint8_t c, uint32_t r) { (void)d; (void)s; (void)c; (void)r; return -1; }
 static int stub_proc_info(int i, char *n, int ns, int *st) { (void)i; (void)n; (void)ns; (void)st; return 0; }

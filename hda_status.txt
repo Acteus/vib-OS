@@ -1,1 +1,0 @@
-HDA Driver verified. Logs clean. Ready for networking.
