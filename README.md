@@ -302,15 +302,7 @@ make run
 make qemu
 ```
 
-### x86_64 (Multi-Architecture Build)
 
-```bash
-# Build for x86_64
-
-
-# Test in QEMU
-make -f Makefile.multiarch ARCH=x86_64 qemu
-```
 
 ### Available Make Targets
 
